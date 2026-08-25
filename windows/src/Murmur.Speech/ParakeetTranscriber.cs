@@ -53,25 +53,92 @@ public sealed class ParakeetTranscriber : ITranscriber
     /// </param>
     public ParakeetTranscriber(string modelDirectory) => _modelDirectory = modelDirectory;
 
+    /// <summary>
+    /// A Parakeet release the app knows how to describe.
+    /// </summary>
+    /// <remarks>
+    /// The engine treats every release identically — same four files, same
+    /// <c>nemo_transducer</c> configuration, no language switch to set, because the model
+    /// identifies the spoken language itself. What differs is what the user can actually
+    /// dictate, and that is invisible from the files alone. Naming the releases here lets the
+    /// app tell someone whose model only speaks English <i>why</i> their Spanish came out as
+    /// nonsense, rather than leaving them to guess.
+    /// </remarks>
+    /// <param name="Folder">
+    /// The directory name under <c>models\</c>, and the only thing distinguishing one release
+    /// from another on disk.
+    /// </param>
+    /// <param name="Name">A short human label for the release, for the settings window.</param>
+    /// <param name="Languages">What this release can transcribe, phrased for a user to read.</param>
+    /// <param name="IsMultilingual">
+    /// Whether anything but English will work. Drives the nudge shown to someone still on the
+    /// English-only build.
+    /// </param>
+    public sealed record ModelVariant(string Folder, string Name, string Languages, bool IsMultilingual);
+
+    /// <summary>The known releases, best first.</summary>
+    /// <remarks>
+    /// v3 leads because it is a strict superset in practice: same encoder size and the same
+    /// speed, a larger vocabulary, and 24 more languages. There is no reason to prefer v2 once
+    /// v3 is present, so a machine carrying both silently gets the better one.
+    /// </remarks>
+    public static IReadOnlyList<ModelVariant> Variants { get; } =
+    [
+        new ModelVariant(
+            "parakeet-v3",
+            "Parakeet v3",
+            "25 European languages, including Spanish",
+            IsMultilingual: true),
+        new ModelVariant(
+            "parakeet-v2",
+            "Parakeet v2",
+            "English only",
+            IsMultilingual: false),
+    ];
+
     /// <summary>Where the model is looked for, in order.</summary>
     /// <remarks>
+    /// <para>
     /// <c>%LOCALAPPDATA%</c> first: it needs no administrator rights, so the app can download
     /// and update the model itself even when installed under Program Files.
+    /// </para>
+    /// <para>
+    /// Variant-major, not location-major: every location for v3 is tried before any location
+    /// for v2. A user who installed the multilingual model gets it even if an old English-only
+    /// copy is still sitting next to the executable — the alternative would silently downgrade
+    /// them to English on the strength of where a stale folder happens to live.
+    /// </para>
     /// </remarks>
     public static IEnumerable<string> DefaultSearchPaths()
     {
-        yield return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Murmur", "models", "parakeet-v2");
+        foreach (var variant in Variants)
+        {
+            yield return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Murmur", "models", variant.Folder);
 
-        // AppContext.BaseDirectory, not Assembly.Location — the latter returns an empty
-        // string in a single-file app, which silently resolves paths against the current
-        // directory instead.
-        yield return Path.Combine(AppContext.BaseDirectory, "models", "parakeet-v2");
+            // AppContext.BaseDirectory, not Assembly.Location — the latter returns an empty
+            // string in a single-file app, which silently resolves paths against the current
+            // directory instead.
+            yield return Path.Combine(AppContext.BaseDirectory, "models", variant.Folder);
+        }
     }
 
     /// <summary>Finds a directory containing a complete model, or null.</summary>
     public static string? Locate() => DefaultSearchPaths().FirstOrDefault(IsComplete);
+
+    /// <summary>Identifies which known release lives in <paramref name="directory"/>, or null.</summary>
+    /// <remarks>
+    /// Null is an ordinary answer, not a failure: <c>ModelDirectory</c> can be pointed anywhere,
+    /// and a hand-placed folder is still perfectly loadable. It only means the app has nothing
+    /// trustworthy to say about which languages that model covers, so it should say nothing.
+    /// </remarks>
+    /// <param name="directory">A model directory; only its final path segment is examined.</param>
+    public static ModelVariant? VariantOf(string directory)
+    {
+        var folder = Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return Variants.FirstOrDefault(v => string.Equals(v.Folder, folder, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>Whether <paramref name="directory"/> holds every required file.</summary>
     /// <remarks>

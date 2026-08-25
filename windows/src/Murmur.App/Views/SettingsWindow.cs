@@ -113,6 +113,7 @@ public sealed class SettingsWindow : Window
     {
         var located = ParakeetTranscriber.Locate();
         var found = located is not null;
+        var variant = located is null ? null : ParakeetTranscriber.VariantOf(located);
 
         var status = new StackPanel
         {
@@ -128,7 +129,7 @@ public sealed class SettingsWindow : Window
                 },
                 new TextBlock
                 {
-                    Text = found ? "Parakeet ready" : "Model not installed",
+                    Text = found ? $"{variant?.Name ?? "Parakeet"} ready" : "Model not installed",
                     FontFamily = Tokens.Fonts.Grotesque,
                     FontSize = Tokens.Fonts.Body,
                     Foreground = Tokens.Brushes.Ink,
@@ -139,14 +140,39 @@ public sealed class SettingsWindow : Window
 
         var detail = found
             // Showing the resolved path matters: "model not found" is unactionable without
-            // knowing which directory was actually checked.
-            ? Note($"Loaded from {located}")
+            // knowing which directory was actually checked. The languages line matters for the
+            // same reason: which model is installed decides what the user is allowed to say.
+            ? Note(variant is null
+                ? $"Loaded from {located}"
+                : $"Transcribes {variant.Languages}.\nLoaded from {located}")
             : Note("Windows has no built-in speech engine equivalent to Apple's, so Murmur "
                  + "cannot transcribe until the Parakeet model is downloaded (~661 MB). "
                  + "See docs/PARAKEET-WINDOWS.md. Expected in:\n"
                  + string.Join("\n", ParakeetTranscriber.DefaultSearchPaths()));
 
-        return new StackPanel { Spacing = Tokens.Space.Snug, Children = { status, detail } };
+        var section = new StackPanel { Spacing = Tokens.Space.Snug, Children = { status, detail } };
+
+        // An English-only model does not refuse Spanish — it mishears it as English words, so
+        // the failure looks like a bad microphone rather than a missing download. Say so before
+        // the user spends an evening blaming their accent.
+        if (variant is { IsMultilingual: false })
+        {
+            section.Children.Add(new TextBlock
+            {
+                Text = "Dictating in Spanish — or any language other than English — needs the "
+                     + "multilingual Parakeet v3 model. Install it to "
+                     + Path.Combine(
+                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                         "Murmur", "models", "parakeet-v3")
+                     + " and it will be picked up in preference to this one.",
+                FontFamily = Tokens.Fonts.Grotesque,
+                FontSize = Tokens.Fonts.Label,
+                Foreground = new SolidColorBrush(Tokens.Colors.MeterAmber),
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        return section;
     }
 
     private void SelectKey(int key, string? warning)

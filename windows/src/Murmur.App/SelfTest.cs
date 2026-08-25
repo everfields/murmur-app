@@ -87,10 +87,21 @@ public static class SelfTest
         // A fresh machine has no model, and that must be a friendly message rather than a
         // crash on launch.
         var located = ParakeetTranscriber.Locate();
-        Console.WriteLine($"  model: {located ?? "(not installed — expected on a clean runner)"}");
+        var variant = located is null ? null : ParakeetTranscriber.VariantOf(located);
+        var describe = located is null
+            ? "(not installed — expected on a clean runner)"
+            : $"{located} ({variant?.Name ?? "unrecognised variant"})";
 
-        return Check("model search paths are absolute",
-            ParakeetTranscriber.DefaultSearchPaths().All(Path.IsPathRooted));
+        Console.WriteLine($"  model: {describe}");
+
+        var paths = ParakeetTranscriber.DefaultSearchPaths().ToList();
+
+        return Check("model search paths are absolute", paths.All(Path.IsPathRooted))
+             // A variant nobody searches for is a variant nobody can install — the kind of gap
+             // that only shows up as "I downloaded it and nothing happened".
+             + Check("every known variant is searched for",
+                 ParakeetTranscriber.Variants.All(v =>
+                     paths.Any(p => p.EndsWith(v.Folder, StringComparison.OrdinalIgnoreCase))));
     }
 
     /// <summary>

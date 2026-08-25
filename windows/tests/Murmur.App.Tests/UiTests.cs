@@ -6,7 +6,9 @@ using Avalonia.Themes.Fluent;
 using Murmur.App.Controls;
 using Murmur.App.Design;
 using Murmur.App.Views;
+using Murmur.Speech;
 using Shouldly;
+using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(Murmur.AppTests.TestAppBuilder))]
 
@@ -186,5 +188,65 @@ public sealed class DesignSystemTests
         Tokens.Motion.NeedleAttackSeconds.ShouldBe(0.30);
         Tokens.Motion.NeedleReleaseSeconds.ShouldBeGreaterThan(Tokens.Motion.NeedleAttackSeconds);
         Tokens.Motion.NeedleOvershoot.ShouldBeGreaterThan(0);
+    }
+}
+
+/// <summary>
+/// Which model the app picks up, and what it believes that model can do.
+/// </summary>
+/// <remarks>
+/// Getting the order wrong here is invisible: the app starts, transcribes English perfectly,
+/// and only mangles Spanish — so it is asserted rather than trusted.
+/// </remarks>
+public sealed class ModelVariantTests
+{
+    [Fact]
+    public void Multilingual_v3_is_searched_before_english_only_v2()
+    {
+        var paths = ParakeetTranscriber.DefaultSearchPaths().ToList();
+
+        var lastV3 = paths.FindLastIndex(p => p.EndsWith("parakeet-v3", StringComparison.Ordinal));
+        var firstV2 = paths.FindIndex(p => p.EndsWith("parakeet-v2", StringComparison.Ordinal));
+
+        lastV3.ShouldBeGreaterThanOrEqualTo(0);
+        firstV2.ShouldBeGreaterThan(lastV3,
+            "every v3 location must be tried before any v2 location, or a stale English-only "
+          + "install next to the executable would beat a multilingual one in LOCALAPPDATA");
+    }
+
+    [Fact]
+    public void Every_search_path_is_absolute()
+    {
+        // A relative path would resolve against the working directory, which for a shortcut or
+        // a tray launch is not the install folder.
+        ParakeetTranscriber.DefaultSearchPaths().ShouldAllBe(p => Path.IsPathRooted(p));
+    }
+
+    [Fact]
+    public void Variant_of_recognises_the_known_folders()
+    {
+        ParakeetTranscriber.VariantOf(Path.Combine("C:", "models", "parakeet-v3"))
+            !.Name.ShouldBe("Parakeet v3");
+        ParakeetTranscriber.VariantOf(Path.Combine("C:", "models", "PARAKEET-V2"))
+            !.Name.ShouldBe("Parakeet v2");
+    }
+
+    [Fact]
+    public void Variant_of_returns_null_for_a_folder_it_does_not_know()
+    {
+        // Legitimate: ModelDirectory can be pointed at any complete model, and the app must
+        // load it rather than claim it is missing.
+        ParakeetTranscriber.VariantOf(Path.Combine("C:", "models", "my-own-parakeet")).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Only_v3_claims_to_be_multilingual()
+    {
+        var v3 = ParakeetTranscriber.Variants.Single(v => v.Folder == "parakeet-v3");
+        var v2 = ParakeetTranscriber.Variants.Single(v => v.Folder == "parakeet-v2");
+
+        v3.IsMultilingual.ShouldBeTrue();
+        v3.Languages.ShouldContain("Spanish");
+        v2.IsMultilingual.ShouldBeFalse();
     }
 }
