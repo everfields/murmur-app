@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Murmur.Dictionary;
 
 namespace Murmur.Core;
@@ -64,6 +66,13 @@ public sealed class DictionaryFile
     public event EventHandler? Changed;
 
     /// <summary>Re-reads the file, discarding in-memory state.</summary>
+    /// <remarks>
+    /// The encoding-less <see cref="File.ReadAllText(string)"/> overload is deliberate: it
+    /// detects and strips a byte-order mark when one is present, so dictionaries written by
+    /// older builds (which emitted a UTF-8 BOM — see <see cref="Save"/>) still parse. Passing
+    /// an explicit encoding would turn that BOM into a stray <c>U+FEFF</c> on the first line,
+    /// which would silently corrupt the first entry.
+    /// </remarks>
     public void Reload()
     {
         _entries = File.Exists(_path) ? Parse(File.ReadAllText(_path)) : [];
@@ -139,17 +148,53 @@ public sealed class DictionaryFile
         Save();
     }
 
-    /// <summary>Case-insensitive search across both sides of an entry.</summary>
+    /// <summary>
+    /// Case- and accent-insensitive search across both sides of an entry.
+    /// </summary>
+    /// <remarks>
+    /// A dictionary full of Spanish terms is exactly the case where an ordinal search fails
+    /// the user: <c>seccion</c> has to find "sección", <c>ano</c> has to find "año". See
+    /// <see cref="ContainsLoose"/>.
+    /// </remarks>
     public IReadOnlyList<DictionaryEntry> Search(string query)
     {
         var trimmed = query.Trim();
         if (trimmed.Length == 0) return _entries;
 
         return _entries.Where(e =>
-            e.Write.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
-            e.Hear.Contains(trimmed, StringComparison.OrdinalIgnoreCase)).ToList();
+            ContainsLoose(e.Write, trimmed) ||
+            ContainsLoose(e.Hear, trimmed)).ToList();
     }
 
+    /// <summary>
+    /// Substring test that ignores both case and diacritics.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="CompareOptions.IgnoreNonSpace"/> is what drops the accents. It also makes
+    /// the comparison normalization-blind: an entry stored as NFD (the form macOS hands back,
+    /// and this file is shared with the macOS build) still matches an NFC query, which an
+    /// ordinal code-unit comparison cannot do.
+    /// </para>
+    /// <para>
+    /// <see cref="CultureInfo.InvariantCulture"/> rather than the current culture: this is a
+    /// filter box, not a sort. Search results must not depend on the machine's locale.
+    /// </para>
+    /// </remarks>
+    private static bool ContainsLoose(string haystack, string needle) =>
+        CultureInfo.InvariantCulture.CompareInfo.IndexOf(
+            haystack, needle, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace) >= 0;
+
+    /// <summary>
+    /// Writes the whole file.
+    /// </summary>
+    /// <remarks>
+    /// The encoding is stated explicitly rather than left to the default so that the absence
+    /// of a byte-order mark is a visible decision. <c>Encoding.UTF8</c> — the static property —
+    /// <i>emits</i> an <c>EF BB BF</c> preamble; this file claims to be byte-compatible with
+    /// the macOS build's <c>dictionary.txt</c> and invites hand-editing, and a BOM breaks the
+    /// first of those and puzzles editors on the second.
+    /// </remarks>
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
@@ -158,10 +203,12 @@ public sealed class DictionaryFile
             Environment.NewLine,
             _entries.Select(e => e.ToFileLine()));
 
-        File.WriteAllText(_path, Header + body + Environment.NewLine, System.Text.Encoding.UTF8);
+        File.WriteAllText(_path, Header + body + Environment.NewLine, Utf8NoBom);
 
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     private static readonly string Header = string.Join(Environment.NewLine,
     [
