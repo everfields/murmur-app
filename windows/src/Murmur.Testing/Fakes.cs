@@ -133,6 +133,12 @@ public sealed class FakeTranscriber : ITranscriber
         IReadOnlyList<string> biasPhrases,
         CancellationToken cancellationToken)
     {
+        // Mirrors the real engines: an unloaded transcriber returns empty text rather than
+        // throwing. The fake used to transcribe regardless, which is exactly why nothing caught
+        // the app never calling LoadAsync at all — every test passed against a model that, in
+        // production, was not there.
+        if (!IsReady) return ValueTask.FromResult(string.Empty);
+
         SegmentLengths.Add(samples.Length);
         LastBias = biasPhrases;
         var text = _responses.Count > 1 ? _responses.Dequeue() : _responses.Peek();

@@ -195,9 +195,29 @@ public sealed class DictationEngine : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Loads the speech model if it is not loaded already.
+    /// </summary>
+    /// <remarks>
+    /// Idempotent and safe to call early. Worth calling at startup rather than leaving to the
+    /// first utterance, because loading Parakeet takes 7–10 seconds and that would otherwise be
+    /// charged to the user's first dictation.
+    /// </remarks>
+    public ValueTask<bool> PrepareAsync(CancellationToken cancellationToken) =>
+        _transcriber.LoadAsync(cancellationToken);
+
     private async Task ProcessAsync(List<float>? samples)
     {
         if (samples is null || samples.Count == 0) return;
+
+        // Nothing else does this, and a transcriber that was never loaded does not complain —
+        // it returns empty text, so every dictation silently produces nothing while the hotkey,
+        // the meter and the whole UI behave perfectly. Load is idempotent, so the cost here is
+        // one branch after the first utterance.
+        if (!_transcriber.IsReady && !await _transcriber.LoadAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            return;
+        }
 
         // Measured from key release, because that is the wait the user actually feels — and
         // it is the only figure on which a streaming and a batch engine compare honestly.

@@ -37,6 +37,47 @@ public sealed class DictationEngineTests
         for (var i = 0; i < 20000 && engine.State != DictationState.Idle; i++) await Task.Yield();
     }
 
+    /// <summary>
+    /// Guards the bug that made the shipped app produce nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// Nobody called <c>LoadAsync</c> — not the app, not the engine — and an unloaded
+    /// transcriber does not complain, it returns empty text. So the hotkey fired, the meter
+    /// moved, the counter ran, and every single dictation silently produced nothing. The engine
+    /// now loads on demand, and <c>FakeTranscriber</c> models the same refusal so this cannot
+    /// pass again by accident.
+    /// </remarks>
+    [Fact]
+    public async Task A_transcriber_that_was_never_loaded_is_loaded_before_use()
+    {
+        var hotkey = new FakeHotkeySource();
+        var transcriber = new FakeTranscriber("hola");
+        var injector = new RecordingTextInjector();
+
+        await using var engine = Build(
+            FakeAudioCapture.Tone(1.0), hotkey, transcriber, injector);
+
+        transcriber.IsReady.ShouldBeFalse("nothing has loaded it yet");
+
+        await DictateAsync(hotkey, engine);
+
+        transcriber.IsReady.ShouldBeTrue("the engine must load it rather than transcribe into the void");
+        injector.Injected.ShouldHaveSingleItem();
+        injector.Injected[0].ShouldBe("hola");
+    }
+
+    [Fact]
+    public async Task Preparing_ahead_of_time_loads_the_model()
+    {
+        var transcriber = new FakeTranscriber("x");
+
+        await using var engine = Build(
+            FakeAudioCapture.Tone(1.0), new FakeHotkeySource(), transcriber, new RecordingTextInjector());
+
+        (await engine.PrepareAsync(CancellationToken.None)).ShouldBeTrue();
+        transcriber.IsReady.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task Speech_is_transcribed_corrected_and_injected()
     {

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using Murmur.Abstractions;
+using NAudio.CoreAudioApi;
 using Murmur.Core;
 using Murmur.Platform.Windows;
 using Murmur.Speech;
@@ -26,6 +27,8 @@ if (stage is "all" or "hook") failures += HookCheck(ConfiguredKey());
 if (stage is "all" or "audio") failures += MicrophoneCheck();
 if (stage is "all" or "inject") failures += InjectionCheck();
 if (stage is "all" or "model") failures += ModelCheck();
+if (stage is "all" or "devices") failures += DeviceCheck();
+if (stage is "listen") failures += ListenCheck();
 
 Console.WriteLine();
 Console.WriteLine(failures == 0 ? "hardware-check: PASS" : $"hardware-check: {failures} FAILED");
@@ -287,6 +290,175 @@ static int ModelCheck()
     return failures;
 }
 
+/// <summary>
+/// Lists every capture device and records a moment from each.
+/// </summary>
+/// <remarks>
+/// <c>WasapiAudioCapture</c> asks for the default <b>Communications</b> endpoint, which is a
+/// different setting from the default Console endpoint and is frequently pointed somewhere
+/// else entirely — a disconnected headset, a webcam, a virtual cable. That produces exactly the
+/// symptom this exists to diagnose: recording starts, the app looks healthy, and every
+/// transcript comes back empty.
+/// </remarks>
+static int DeviceCheck()
+{
+    Console.WriteLine();
+    Console.WriteLine("== capture devices ==");
+
+    using var enumerator = new MMDeviceEnumerator();
+
+    var communications = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+    var console = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+
+    Console.WriteLine($"  default Communications : {communications.FriendlyName}");
+    Console.WriteLine($"  default Console        : {console.FriendlyName}");
+
+    if (communications.ID != console.ID)
+    {
+        Console.WriteLine("  NOTE: these differ. The app follows Communications.");
+    }
+
+    Console.WriteLine();
+
+    var loudest = string.Empty;
+    var loudestPeak = 0f;
+
+    foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+    {
+        var peak = Listen(device.ID, TimeSpan.FromSeconds(2));
+        var marker = device.ID == communications.ID ? " <-- the app uses this" : string.Empty;
+
+        Console.WriteLine($"  {peak:0.00000}  {device.FriendlyName}{marker}");
+
+        if (peak > loudestPeak)
+        {
+            loudestPeak = peak;
+            loudest = device.FriendlyName;
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  loudest: {loudest} ({loudestPeak:0.00000})");
+    Console.WriteLine("  Speak while this runs. A device that never rises above ~0.01 is not hearing you.");
+
+    return 0;
+}
+
+/// <summary>Records from one device and returns the peak RMS seen.</summary>
+static float Listen(string deviceId, TimeSpan duration)
+{
+    var peak = 0f;
+
+    try
+    {
+        var capture = new WasapiAudioCapture(deviceId);
+        using var cts = new CancellationTokenSource(duration);
+
+        try
+        {
+            Task.Run(async () =>
+            {
+                await foreach (var chunk in capture.CaptureAsync(cts.Token))
+                {
+                    peak = Math.Max(peak, chunk.Rms());
+                }
+            }).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected.
+        }
+
+        capture.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"    (could not open: {e.GetType().Name})");
+    }
+
+    return peak;
+}
+
+/// <summary>
+/// Arms the real engine and reports, live, where a dictation stops working.
+/// </summary>
+/// <remarks>
+/// Every other check exercises one binding in isolation. This is the whole path with a human in
+/// it — hold the configured key, speak, release — printing the level as it hears you and the
+/// transcript when it finishes. It is the fastest way to tell "never heard you" apart from
+/// "heard you and failed to type".
+/// </remarks>
+static int ListenCheck()
+{
+    Console.WriteLine("== live dictation ==");
+
+    var directory = ParakeetTranscriber.Locate();
+    if (directory is null) return Check("model located", false);
+
+    var key = ConfiguredKey();
+    var capture = new WasapiAudioCapture();
+    var hook = new PushToTalkHook { Key = key };
+    var transcriber = new ParakeetTranscriber(directory);
+    var injected = new List<string>();
+
+    var engine = new DictationEngine(
+        capture, hook, transcriber, new CollectingInjector(injected), () => []);
+
+    DictationResult? result = null;
+    engine.Completed += (_, r) => result = r;
+
+    Console.WriteLine("  loading model...");
+    transcriber.LoadAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+    var failures = Check("model loaded", transcriber.IsReady);
+    failures += Check("hook armed", engine.Start());
+
+    Console.WriteLine();
+    Console.WriteLine($"  HOLD {key} AND SPEAK. 30 seconds. Ctrl+C to stop.");
+    Console.WriteLine();
+
+    var peak = 0f;
+    var everRecorded = false;
+
+    for (var i = 0; i < 300; i++)
+    {
+        Thread.Sleep(100);
+
+        if (engine.State == DictationState.Recording)
+        {
+            everRecorded = true;
+            peak = Math.Max(peak, engine.Level);
+            Console.Write($"\r  recording... level {engine.Level:0.0000}  peak {peak:0.0000}   ");
+        }
+
+        if (result is not null) break;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine();
+
+    failures += Check("the key started a recording", everRecorded);
+    failures += Check($"the microphone heard something (peak {peak:0.0000})", peak > 0.01f);
+
+    if (result is null)
+    {
+        Console.WriteLine("  no transcript produced.");
+        Console.WriteLine(peak > 0.01f
+            ? "  It heard audio but decoded nothing — check the model, or speak closer."
+            : "  It heard nothing. Run the 'devices' check: the wrong microphone is likely selected.");
+        failures++;
+    }
+    else
+    {
+        Console.WriteLine($"  heard: \"{result.Text}\"");
+        Console.WriteLine($"  {result.AudioDuration.TotalSeconds:0.0}s audio decoded in {result.ProcessingTime.TotalSeconds:0.00}s");
+        failures += Check("text was handed to the injector", injected.Count == 1);
+    }
+
+    engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    return failures;
+}
+
 static int Check(string name, bool passed)
 {
     Console.WriteLine($"  [{(passed ? "ok" : "FAIL")}] {name}");
@@ -427,5 +599,15 @@ internal static class Keyboard
         {
             Console.WriteLine($"  !! SendInput failed: {Marshal.GetLastWin32Error()}");
         }
+    }
+}
+
+/// <summary>Records what would have been typed, instead of typing it.</summary>
+internal sealed class CollectingInjector(List<string> sink) : ITextInjector
+{
+    public ValueTask<bool> InjectAsync(string text, CancellationToken cancellationToken)
+    {
+        sink.Add(text);
+        return ValueTask.FromResult(true);
     }
 }

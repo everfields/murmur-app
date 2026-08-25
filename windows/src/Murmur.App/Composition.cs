@@ -81,6 +81,23 @@ public sealed class Composition : IAsyncDisposable
                 capture!, hotkey!, transcriber, injector!,
                 () => dictionary.Entries);
 
+            // Warm the model now rather than on the first keypress: loading Parakeet takes
+            // 7-10 seconds, and charging that to the user's first dictation reads as a hang.
+            // Deliberately not awaited — the window must appear immediately — and failure is
+            // not fatal here, because ProcessAsync loads again if this did not finish or did
+            // not work. Settings is where a missing model gets reported.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await engine.PrepareAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is IOException or InvalidOperationException)
+                {
+                    // Nothing useful to do on a background thread; the next dictation retries.
+                }
+            });
+
             engine.Completed += (_, result) =>
             {
                 if (!settings.Data.KeepHistory) return;

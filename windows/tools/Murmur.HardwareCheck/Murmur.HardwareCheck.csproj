@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Murmur.Core\Murmur.Core.csproj" />
     <ProjectReference Include="..\..\src\Murmur.Speech\Murmur.Speech.csproj" />
     <ProjectReference Include="..\..\src\Murmur.Platform.Windows\Murmur.Platform.Windows.csproj" />
+    <PackageReference Include="NAudio" />
   </ItemGroup>
 
 </Project>
