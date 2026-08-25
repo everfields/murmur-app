@@ -13,7 +13,12 @@
     "  3. Longest match first - a longer trigger wins over a shorter overlapping one.",
     "  4. Glued words match   - parts may be separated by any number of spaces or hyphens,",
     "                           including none at all.",
-    "  5. Disabled is inert   - a disabled entry changes nothing."
+    "  5. Disabled is inert   - a disabled entry changes nothing.",
+    "  6. Diacritics fold     - matching ignores accents in both directions, so a trigger",
+    "                           of 'nunez' matches 'Nuñez' and a trigger of 'nuñez'",
+    "                           matches 'Nunez'. The replacement is inserted verbatim.",
+    "  7. NFC throughout      - trigger, text and replacement are all composed before",
+    "                           matching, whether or not the dictionary holds any rules."
   ],
   "version": 1,
   "cases": [
@@ -348,6 +353,161 @@
           "count": 1
         }
       ]
+    },
+    {
+      "name": "an unaccented trigger matches accented text",
+      "$comment": "The dominant case for a Spanish speaker, not an edge case: the engine writes “Andújar” while the user's rule says “andujar”. Matching folds diacritics; the replacement is still inserted exactly as the user wrote it.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "andujar",
+          "write": "Andújar"
+        }
+      ],
+      "input": "a note from andújar today",
+      "expected": "a note from Andújar today",
+      "expectedCorrections": [
+        {
+          "to": "Andújar",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "an accented trigger matches unaccented text",
+      "$comment": "The mirror of the case above. Folding has to be symmetric, or the user is back to hand-enumerating variants from the other end.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "andújar",
+          "write": "Andújar"
+        }
+      ],
+      "input": "a note from andujar today",
+      "expected": "a note from Andújar today",
+      "expectedCorrections": [
+        {
+          "to": "Andújar",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "ñ and n are interchangeable in both directions",
+      "$comment": "All four spellings of the name are one trigger. “nunez” is the rule; the three accented spellings in the input are what the engine actually produces.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "nunez",
+          "write": "Núñez"
+        }
+      ],
+      "input": "nuñez, núnez and núñez",
+      "expected": "Núñez, Núñez and Núñez",
+      "expectedCorrections": [
+        {
+          "to": "Núñez",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "an uppercase accented word is matched",
+      "$comment": "Case folding and diacritic folding have to compose. Both cases of every accented letter are listed in the pattern rather than left to the engine's own folding, because .NET and ICU do not fold identically.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "avila",
+          "write": "Ávila"
+        }
+      ],
+      "input": "ÁVILA is in Castilla",
+      "expected": "Ávila is in Castilla",
+      "expectedCorrections": [
+        {
+          "to": "Ávila",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "inverted Spanish punctuation is a boundary, not part of the word",
+      "$comment": "¿ and ¡ are punctuation, so the fence opens and closes around them exactly as it does for an ordinary question mark.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "andujar",
+          "write": "Andújar"
+        }
+      ],
+      "input": "¿andújar? ¡Andujar!",
+      "expected": "¿Andújar? ¡Andújar!",
+      "expectedCorrections": [
+        {
+          "to": "Andújar",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "the word fence still holds once diacritics are folded",
+      "$comment": "Widening the pattern must not widen the fence. A folded trigger is still a whole match or no match at all.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "ano",
+          "write": "año"
+        }
+      ],
+      "input": "un caso anodino y un piano",
+      "expected": "un caso anodino y un piano",
+      "expectedCorrections": []
+    },
+    {
+      "name": "folding diacritics is symmetric, and the cost is accepted",
+      "$comment": "The trade, written down rather than left to be discovered: a rule for “ano” also fires on “año”. Accent-blind matching cannot tell them apart. For a dictionary of names and technical terms that is the right side of the trade, and pinning it here keeps it a decision.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "ano",
+          "write": "año"
+        }
+      ],
+      "input": "hace un ano y otro año",
+      "expected": "hace un año y otro año",
+      "expectedCorrections": [
+        {
+          "to": "año",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "an empty rule set still normalizes to NFC",
+      "$comment": "Normalization must not depend on whether the user happens to own any correction rules. A default install has an empty dictionary and still has to emit composed text. Input here is deliberately NFD.",
+      "entries": [
+        {
+          "kind": "term",
+          "write": "Anthropic"
+        }
+      ],
+      "input": "a café racer bike",
+      "expected": "a café racer bike",
+      "expectedCorrections": []
+    },
+    {
+      "name": "a combining mark is part of the word, not a boundary",
+      "$comment": "NFC leaves a mark standing wherever no precomposed form exists - there is no q-with-acute - so marks do reach the matcher. Treating one as a boundary would let a rule bite the base letters off the front of a word, so the fence covers marks as well as letters and digits. Input here is deliberately decomposed.",
+      "entries": [
+        {
+          "kind": "correction",
+          "hear": "iraq",
+          "write": "Iraq"
+        }
+      ],
+      "input": "iraq́ stays put",
+      "expected": "iraq́ stays put",
+      "expectedCorrections": []
     }
   ]
 }

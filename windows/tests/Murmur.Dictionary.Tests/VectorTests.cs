@@ -138,4 +138,64 @@ public sealed class VectorTests
     [Fact]
     public void A_distinctive_phrase_is_not_flagged() =>
         DictionaryWarning.Check(DictionaryEntry.Correction("clawed code", "Claude Code")).ShouldBeEmpty();
+
+    /// <summary>
+    /// Walks the whole diacritic folding table, base letter by base letter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The shared vectors are the contract and they cover the semantics — folding is symmetric,
+    /// the fence still holds, ASCII is untouched. What they cannot cover is the table itself:
+    /// 210 hand-typed characters, of which the vectors exercise perhaps a dozen. A single
+    /// mistyped one — Ð (U+00D0, eth) where Đ (U+0110, D with stroke) was meant — would ship in
+    /// silence, and it would ship on macOS too, because that table is copied there verbatim.
+    /// </para>
+    /// <para>
+    /// So this is deliberately Windows-only and deliberately exhaustive: every listed variant
+    /// must match its base letter, in upper case as well as lower, and the base letter must
+    /// match the variant back again. The rows below are the same nineteen classes in the same
+    /// order as <c>DictionaryCorrector</c>'s table and its Swift twin, so they can be read side
+    /// by side.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData('a', "áàâäãåāăą")]
+    [InlineData('c', "çćĉċč")]
+    [InlineData('d', "ďđ")]
+    [InlineData('e', "éèêëēĕėęě")]
+    [InlineData('g', "ĝğġģ")]
+    [InlineData('h', "ĥħ")]
+    [InlineData('i', "íìîïĩīĭį")]
+    [InlineData('j', "ĵ")]
+    [InlineData('k', "ķ")]
+    [InlineData('l', "ĺļľŀł")]
+    [InlineData('n', "ñńņň")]
+    [InlineData('o', "óòôöõōŏőø")]
+    [InlineData('r', "ŕŗř")]
+    [InlineData('s', "śŝşš")]
+    [InlineData('t', "ţťŧ")]
+    [InlineData('u', "úùûüũūŭůűų")]
+    [InlineData('w', "ŵ")]
+    [InlineData('y', "ýÿŷ")]
+    [InlineData('z', "źżž")]
+    public void Every_accented_letter_folds_onto_its_base_letter(char plain, string variants)
+    {
+        var byPlain = new DictionaryCorrector([DictionaryEntry.Correction(plain.ToString(), "X")]);
+
+        foreach (var variant in variants)
+        {
+            var upper = char.ToUpperInvariant(variant);
+
+            byPlain.Apply(variant.ToString()).Text
+                .ShouldBe("X", $"trigger '{plain}' should match '{variant}'");
+            byPlain.Apply(upper.ToString()).Text
+                .ShouldBe("X", $"trigger '{plain}' should match '{upper}'");
+
+            // ...and back the other way, which is the half that lets a user write their rule
+            // with the accents on and still have it fire on unaccented output.
+            new DictionaryCorrector([DictionaryEntry.Correction(variant.ToString(), "X")])
+                .Apply(plain.ToString()).Text
+                .ShouldBe("X", $"trigger '{variant}' should match '{plain}'");
+        }
+    }
 }

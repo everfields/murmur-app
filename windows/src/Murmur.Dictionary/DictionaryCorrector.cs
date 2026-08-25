@@ -20,7 +20,7 @@ public sealed record AppliedCorrection(string From, string To, int Count);
 /// implementations of one contract, and <c>shared/dictionary-test-vectors.json</c> is what
 /// stops them drifting. <b>Change the semantics there first.</b>
 /// </para>
-/// <para>Three rules, all load-bearing:</para>
+/// <para>Four rules, all load-bearing:</para>
 /// <list type="number">
 /// <item><b>Longest match first.</b> "Claude Code" is applied before "Claude", so the longer
 /// rule isn't pre-empted by a shorter one that overlaps it.</item>
@@ -28,6 +28,11 @@ public sealed record AppliedCorrection(string From, string To, int Count);
 /// "cloud code" can never touch "Cloudflare" or the ordinary word "cloud".</item>
 /// <item><b>Glued words still match.</b> Engines run words together — "CloudCode",
 /// "cloud-code" — so the gap between parts is matched as optional whitespace or hyphens.</item>
+/// <item><b>Diacritics are folded, both ways.</b> "nunez", "nuñez" and "núñez" are one and the
+/// same trigger, and any of them matches any of those spellings in the text. Without this a
+/// Spanish user has to hand-enumerate every accented variant of every name, because the engine
+/// writes "Andújar" while their rule says "andujar". The replacement is always inserted exactly
+/// as the user wrote it.</item>
 /// </list>
 /// </remarks>
 public sealed class DictionaryCorrector
@@ -73,13 +78,20 @@ public sealed class DictionaryCorrector
     /// <returns>The rewritten text, plus one entry per rule that fired.</returns>
     public (string Text, IReadOnlyList<AppliedCorrection> Applied) Apply(string text)
     {
-        if (_rules.Count == 0 || string.IsNullOrEmpty(text)) return (text, []);
+        if (string.IsNullOrEmpty(text)) return (text, []);
 
         // Normalize to NFC before matching, exactly as the Swift side does. Decomposed and
         // composed forms of the same accented word are different sequences of code points —
         // "café" is 4 or 5 depending on form — so an accented trigger silently never fires
         // unless both sides agree. This is part of the shared contract, not an optimisation.
         var result = text.Normalize(NormalizationForm.FormC);
+
+        // Normalizing *before* the empty-dictionary check, not after, is deliberate. The normal
+        // form of the text this app stores and injects must not depend on whether the user
+        // happens to own any rules: a default install has an empty dictionary and still has to
+        // emit NFC, or the same dictation produces different bytes for different users.
+        if (_rules.Count == 0) return (result, []);
+
         var applied = new List<AppliedCorrection>();
 
         foreach (var rule in _rules)
@@ -111,10 +123,15 @@ public sealed class DictionaryCorrector
     /// "CloudCode" and "Cloud-Code" alongside the spaced form.
     /// </para>
     /// <para>
-    /// The fences are lookarounds on letters and digits rather than <c>\b</c>. <c>\b</c>
-    /// treats a trailing hyphen or apostrophe as a boundary and would let a rule bite into a
-    /// longer word; requiring that no letter or digit sits on either side is the stricter
-    /// guarantee, and it's what keeps "cloud code" off "Cloudflare".
+    /// Every letter is then widened into a character class covering its accented relatives, so
+    /// that matching ignores diacritics in both directions. See
+    /// <see cref="ExpandDiacritics"/> for why the pattern is widened rather than the text.
+    /// </para>
+    /// <para>
+    /// The fences are lookarounds on letters, digits and combining marks rather than
+    /// <c>\b</c>. <c>\b</c> treats a trailing hyphen or apostrophe as a boundary and would let
+    /// a rule bite into a longer word; requiring that no letter, digit or mark sits on either
+    /// side is the stricter guarantee, and it's what keeps "cloud code" off "Cloudflare".
     /// </para>
     /// </remarks>
     private static Rule? MakeRule(string trigger, string replacement)
@@ -125,23 +142,156 @@ public sealed class DictionaryCorrector
             .Normalize(NormalizationForm.FormC)
             .Trim()
             .Split(PhraseSeparators, StringSplitOptions.RemoveEmptyEntries)
-            .Select(Regex.Escape)
+            .Select(part => ExpandDiacritics(Regex.Escape(part)))
             .ToArray();
 
         if (parts.Length == 0) return null;
 
         var body = string.Join(@"[\s\-]*", parts);
-        var pattern = $@"(?<![\p{{L}}\p{{N}}]){body}(?![\p{{L}}\p{{N}}])";
+
+        // \p{M} sits in the fence alongside letters and digits because a combining mark is part
+        // of the word it hangs off. NFC leaves a mark standing wherever no precomposed form
+        // exists, and a decomposed "café" reaching the matcher would otherwise let a trigger of
+        // "cafe" bite off the base letters — U+0301 is not a letter, so the old fence saw a
+        // word boundary where a reader sees the middle of a word.
+        var pattern = $@"(?<![\p{{L}}\p{{N}}\p{{M}}]){body}(?![\p{{L}}\p{{N}}\p{{M}}])";
 
         try
         {
             var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, MatchTimeout);
-            return new Rule(regex, replacement, trigger);
+
+            // NFC the replacement as well. It is injected verbatim and every shorter rule then
+            // runs over the result, so a decomposed replacement — a dictionary.txt authored on
+            // macOS, where Cocoa hands back NFD readily — would seed combining marks into text
+            // the later rules have to match against.
+            return new Rule(regex, replacement.Normalize(NormalizationForm.FormC), trigger);
         }
         catch (ArgumentException)
         {
             return null;
         }
+    }
+
+    // ---- Diacritic folding ----
+
+    /// <summary>
+    /// The folding table: one string per equivalence class, holding the base letter followed by
+    /// every accented relative of it in the Latin-1 Supplement and Latin Extended-A blocks,
+    /// lower and upper case interleaved.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Duplicated by design.</b> The same table, in the same order, is repeated verbatim in
+    /// <c>DictionaryCorrector.swift</c>. The two platforms share no code — only
+    /// <c>shared/dictionary-test-vectors.json</c> — so the two copies have to be edited
+    /// together, and a change made here alone is a live bug on the other platform.
+    /// </para>
+    /// <para>
+    /// Both cases are spelled out rather than left to <see cref="RegexOptions.IgnoreCase"/> to
+    /// supply the uppercase halves. .NET and ICU do not fold every character identically, and
+    /// listing the class in full makes both engines match the same set whatever their folding
+    /// tables happen to say.
+    /// </para>
+    /// <para>
+    /// Deliberate omissions. Letters with no accented relatives — b, f, m, p, q, v, x — are
+    /// absent, so they are emitted literally and an ASCII trigger against ASCII text builds a
+    /// pattern that behaves exactly as it did before folding existed. Multi-letter equivalences
+    /// (ß, æ, œ) are out of scope: they are not one letter plus a mark. Separate letters that
+    /// merely look accented (ð, þ, ŋ) are not variants of anything. And ı/İ are left out on
+    /// purpose — dotless and dotted I are the one pair .NET and ICU are known to disagree
+    /// about, this repo's build settings call that divergence out by name, and a character that
+    /// behaves differently on the two platforms is exactly what the shared vectors exist to
+    /// keep out.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] DiacriticClasses =
+    [
+        "aAáÁàÀâÂäÄãÃåÅāĀăĂąĄ",
+        "cCçÇćĆĉĈċĊčČ",
+        "dDďĎđĐ",
+        "eEéÉèÈêÊëËēĒĕĔėĖęĘěĚ",
+        "gGĝĜğĞġĠģĢ",
+        "hHĥĤħĦ",
+        "iIíÍìÌîÎïÏĩĨīĪĭĬįĮ",
+        "jJĵĴ",
+        "kKķĶ",
+        "lLĺĹļĻľĽŀĿłŁ",
+        "nNñÑńŃņŅňŇ",
+        "oOóÓòÒôÔöÖõÕōŌŏŎőŐøØ",
+        "rRŕŔŗŖřŘ",
+        "sSśŚŝŜşŞšŠ",
+        "tTţŢťŤŧŦ",
+        "uUúÚùÙûÛüÜũŨūŪŭŬůŮűŰųŲ",
+        "wWŵŴ",
+        "yYýÝÿŸŷŶ",
+        "zZźŹżŻžŽ",
+    ];
+
+    /// <summary>
+    /// Every character in <see cref="DiacriticClasses"/>, mapped to the class it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// <c>ToDictionary</c> throws on a duplicate key, so a character listed under two base
+    /// letters is a hard failure at first use rather than a silently wrong pattern.
+    /// </remarks>
+    private static readonly Dictionary<char, string> ClassByCharacter = DiacriticClasses
+        .SelectMany(characterClass => characterClass.Select(c => (Character: c, Class: characterClass)))
+        .ToDictionary(pair => pair.Character, pair => pair.Class);
+
+    /// <summary>
+    /// Widens an already-escaped literal so that every letter also matches its accented
+    /// relatives: <c>n</c> becomes <c>[nNñÑ…]</c>, and <c>ñ</c> becomes that very same class.
+    /// Mapping the plain and the accented letter onto one class is what makes the folding
+    /// symmetric — "nunez", "nuñez" and "núñez" all build the identical pattern.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Widening the <i>pattern</i> rather than folding the <i>text</i> is a deliberate choice.
+    /// Stripping accents from the haystack would change its length and shift every offset after
+    /// the first accented character, and <see cref="Apply"/> reports <c>matches[0].Value</c> —
+    /// the span the engine actually produced — which has to remain a genuine substring of the
+    /// real input. Character classes leave the input untouched, so every offset and length
+    /// stays exact.
+    /// </para>
+    /// <para>
+    /// The cost is real and worth stating outright: a rule for "ano" will now also fire on
+    /// "año". Accent-blind matching cannot tell the two apart. For a dictionary of names and
+    /// technical terms — which is what this feature is for — catching "Andújar" from a trigger
+    /// of "andujar" is worth the occasional over-eager hit, and
+    /// <c>shared/dictionary-test-vectors.json</c> pins that behaviour down so it stays a
+    /// decision rather than a discovery.
+    /// </para>
+    /// </remarks>
+    private static string ExpandDiacritics(string escaped)
+    {
+        var builder = new StringBuilder(escaped.Length * 8);
+
+        for (var i = 0; i < escaped.Length; i++)
+        {
+            var c = escaped[i];
+
+            // Regex.Escape emits two-character escapes: "\." for a dot, but also "\n" for a
+            // newline. The character after a backslash belongs to the escape, so expanding it
+            // would turn "\n" into "\[nNñÑ…]" — a literal open bracket — and change the
+            // pattern's meaning entirely. Copy both across untouched.
+            if (c == '\\' && i + 1 < escaped.Length)
+            {
+                builder.Append(c).Append(escaped[i + 1]);
+                i++;
+                continue;
+            }
+
+            if (ClassByCharacter.TryGetValue(c, out var characterClass))
+            {
+                builder.Append('[').Append(characterClass).Append(']');
+            }
+            else
+            {
+                builder.Append(c);
+            }
+        }
+
+        return builder.ToString();
     }
 
     // ---- Engine biasing ----
