@@ -54,9 +54,17 @@ internal static class PlatformFactory
 
         AssemblyLoadContext.Default.Resolving += (context, name) =>
         {
-            if (!string.Equals(name.Name, AssemblyName, StringComparison.Ordinal)) return null;
+            // Deliberately not limited to Murmur.Platform.Windows. That assembly has
+            // dependencies of its own — NAudio — and because nothing references it at compile
+            // time, none of them appear in Murmur.App.deps.json, which is what the default
+            // loader probes. So the platform layer resolved, constructed cleanly, and then
+            // threw FileNotFoundException for NAudio.Wasapi the moment audio capture actually
+            // started: on a background task, silently, with the UI still showing a recording in
+            // progress. Resolving the whole directory is the fix, and it is safe because this
+            // event fires only after normal resolution has already failed.
+            if (name.Name is null) return null;
 
-            var candidate = System.IO.Path.Combine(AppContext.BaseDirectory, AssemblyName + ".dll");
+            var candidate = System.IO.Path.Combine(AppContext.BaseDirectory, name.Name + ".dll");
             return File.Exists(candidate) ? context.LoadFromAssemblyPath(candidate) : null;
         };
     }

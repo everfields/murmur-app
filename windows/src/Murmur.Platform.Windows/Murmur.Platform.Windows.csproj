@@ -5,6 +5,16 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Murmur.Platform.Windows</RootNamespace>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+
+    <!-- REQUIRED, and the app is broken without it. A library does not copy its NuGet
+         assemblies to bin by default, so NAudio.Wasapi never appeared here — and the targets
+         in Murmur.App that copy "NAudio*.dll" across therefore matched nothing, silently,
+         because that Copy runs with ContinueOnError. The app shipped, loaded this assembly by
+         reflection, constructed WasapiAudioCapture without touching a single NAudio type, and
+         only threw FileNotFoundException once the user actually held the key — inside a
+         fire-and-forget task, where nothing surfaced it. Every dictation captured zero samples
+         and the UI looked perfect throughout. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>

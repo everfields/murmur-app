@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Murmur.Core;
 using Murmur.Dictionary;
@@ -128,12 +129,51 @@ public static class SelfTest
 
         failures += Check("audio capture constructs", PlatformFactory.CreateAudioCapture() is not null);
         failures += Check("text injector constructs", PlatformFactory.CreateTextInjector() is not null);
+        failures += CheckPlatformDependencies();
 
         // Constructed, not started: installing a real low-level keyboard hook on a CI runner
         // is neither useful nor polite.
         var hotkey = PlatformFactory.CreateHotkeySource(0xA3);
         failures += Check("hotkey source constructs with Right Ctrl", hotkey is not null);
         hotkey?.Dispose();
+
+        return failures;
+    }
+
+    /// <summary>
+    /// Verifies the platform layer's own dependencies are present, not just the layer itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This exists because "audio capture constructs" passed for the entire life of a build
+    /// that could not capture a single sample.</b> <c>WasapiAudioCapture</c>'s constructor
+    /// touches no NAudio type, so it succeeded; <c>NAudio.Wasapi.dll</c> was missing from the
+    /// output entirely, and the <c>FileNotFoundException</c> only arrived when a user held the
+    /// key — on a fire-and-forget task, where it was swallowed whole.
+    /// </para>
+    /// <para>
+    /// Constructing an object proves nothing about the assemblies it will need later. Loading
+    /// them by name does, and it is deterministic on a runner with no microphone.
+    /// </para>
+    /// </remarks>
+    private static int CheckPlatformDependencies()
+    {
+        var failures = 0;
+
+        foreach (var name in (string[])["NAudio.Wasapi", "NAudio.Core"])
+        {
+            var loaded = false;
+            try
+            {
+                loaded = Assembly.Load(new AssemblyName(name)) is not null;
+            }
+            catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                loaded = false;
+            }
+
+            failures += Check($"{name} resolves", loaded);
+        }
 
         return failures;
     }

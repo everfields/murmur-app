@@ -6,6 +6,7 @@ using Murmur.Abstractions;
 using NAudio.CoreAudioApi;
 using Murmur.Core;
 using Murmur.Platform.Windows;
+using Murmur.Dictionary;
 using Murmur.Speech;
 
 // Checks the bindings that CI structurally cannot: the low-level keyboard hook firing on a
@@ -28,6 +29,7 @@ if (stage is "all" or "audio") failures += MicrophoneCheck();
 if (stage is "all" or "inject") failures += InjectionCheck();
 if (stage is "all" or "model") failures += ModelCheck();
 if (stage is "all" or "devices") failures += DeviceCheck();
+if (stage is "all" or "wiring") failures += WiringCheck();
 if (stage is "listen") failures += ListenCheck();
 
 Console.WriteLine();
@@ -456,6 +458,76 @@ static int ListenCheck()
     }
 
     engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    return failures;
+}
+
+/// <summary>
+/// Exercises the collaborators the app has and this tool does not, against the real files.
+/// </summary>
+/// <remarks>
+/// <c>ProcessAsync</c> is reached through a fire-and-forget <c>_ = EndAsync()</c>, so anything
+/// it throws is swallowed whole: the state machine still returns to Idle and every visible
+/// signal looks correct. The dictionary lookup and the history write are the two things it does
+/// that a bare engine does not, and both read real files on disk, so both are checked here
+/// against the user's actual data rather than a temp directory.
+/// </remarks>
+static int WiringCheck()
+{
+    Console.WriteLine();
+    Console.WriteLine("== app wiring (real files) ==");
+
+    var failures = 0;
+
+    Console.WriteLine($"  dictionary: {DictionaryFile.DefaultPath}");
+    try
+    {
+        var dictionary = new DictionaryFile(DictionaryFile.DefaultPath);
+        var entries = dictionary.Entries;
+        Console.WriteLine($"  {entries.Count} entries");
+
+        // The engine calls both of these on every utterance, before it transcribes.
+        var bias = DictionaryCorrector.BiasPhrases(entries);
+        var corrector = new DictionaryCorrector(entries);
+        var (text, _) = corrector.Apply("probando uno dos tres, ¿qué tal Andújar?");
+
+        Console.WriteLine($"  bias phrases: {bias.Count}, correction pass returned {text.Length} chars");
+        failures += Check("dictionary loads and corrects", true);
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"  EXCEPTION {e.GetType().Name}: {e.Message}");
+        failures += Check("dictionary loads and corrects", false);
+    }
+
+    Console.WriteLine($"  history: {TranscriptStore.DefaultPath}");
+    try
+    {
+        var store = new TranscriptStore(TranscriptStore.DefaultPath);
+        var before = store.Records.Count;
+
+        store.Add(new TranscriptRecord
+        {
+            At = DateTimeOffset.Now,
+            AudioSeconds = 1,
+            ProcessingSeconds = 0.1,
+            Text = "hardware-check ¿probando? año",
+        });
+
+        var after = new TranscriptStore(TranscriptStore.DefaultPath).Records.Count;
+        Console.WriteLine($"  {before} records before, {after} after");
+
+        failures += Check("history accepts a record", after == before + 1);
+
+        // Leave no litter in the user's real history.
+        var written = store.Records.FirstOrDefault(r => r.Text.StartsWith("hardware-check", StringComparison.Ordinal));
+        if (written is not null) store.Remove(written.Id);
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"  EXCEPTION {e.GetType().Name}: {e.Message}");
+        failures += Check("history accepts a record", false);
+    }
+
     return failures;
 }
 

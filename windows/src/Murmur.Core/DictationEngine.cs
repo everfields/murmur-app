@@ -48,6 +48,7 @@ public sealed class DictationEngine : IAsyncDisposable
     private readonly ITextInjector _injector;
     private readonly IClock _clock;
     private readonly Func<IReadOnlyList<DictionaryEntry>> _dictionary;
+    private readonly Action<string>? _trace;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _recording;
@@ -76,14 +77,28 @@ public sealed class DictationEngine : IAsyncDisposable
     /// a restart.
     /// </param>
     /// <param name="clock">Time source; defaults to the system clock.</param>
+    /// <param name="trace">
+    /// Optional diagnostic sink, called with one line per stage of a dictation.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <paramref name="trace"/> exists because this class is reached through a fire-and-forget
+    /// <c>_ = EndAsync()</c>, so a dictation can fail — or quietly produce nothing — while every
+    /// visible signal in the UI stays perfectly correct. Without it, the only way to tell "heard
+    /// nothing" from "heard you and decoded nothing" from "decoded and failed to type" is to
+    /// rebuild the app.
+    /// </para>
+    /// </remarks>
     public DictationEngine(
         IAudioCapture capture,
         IHotkeySource hotkey,
         ITranscriber transcriber,
         ITextInjector injector,
         Func<IReadOnlyList<DictionaryEntry>> dictionary,
-        IClock? clock = null)
+        IClock? clock = null,
+        Action<string>? trace = null)
     {
+        _trace = trace;
         _capture = capture;
         _hotkey = hotkey;
         _transcriber = transcriber;
@@ -127,16 +142,20 @@ public sealed class DictationEngine : IAsyncDisposable
             _startedAt = _clock.Now;
             _recording = new CancellationTokenSource();
             SetState(DictationState.Recording);
+            _trace?.Invoke("begin: recording");
         }
         finally
         {
             _gate.Release();
         }
 
+        var chunks = 0;
+
         try
         {
             await foreach (var chunk in _capture.CaptureAsync(_recording!.Token).ConfigureAwait(false))
             {
+                chunks++;
                 // Stop consuming the moment recording ends. Cancellation is cooperative, so
                 // chunks already queued still arrive after EndAsync has moved on — and
                 // without this guard one of them sets Level back to a reading that has
@@ -154,8 +173,15 @@ public sealed class DictationEngine : IAsyncDisposable
         {
             // Normal: the key was released.
         }
+        catch (Exception e)
+        {
+            // Capture runs on a fire-and-forget task too, so this would otherwise vanish.
+            _trace?.Invoke($"begin: capture FAILED {e.GetType().Name}: {e.Message}");
+        }
         finally
         {
+            _trace?.Invoke($"begin: capture loop ended after {chunks} chunk(s)");
+
             // Authoritative: this runs only once the capture loop has genuinely finished, so
             // nothing can raise the level afterwards and leave the meter stuck.
             Level = 0;
@@ -174,6 +200,7 @@ public sealed class DictationEngine : IAsyncDisposable
 
             await _recording!.CancelAsync().ConfigureAwait(false);
             samples = _buffer;
+            _trace?.Invoke($"end: buffer holds {(samples is null ? "null" : samples.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))}");
             _buffer = null;
             Level = 0;
             SetState(DictationState.Transcribing);
@@ -186,6 +213,12 @@ public sealed class DictationEngine : IAsyncDisposable
         try
         {
             await ProcessAsync(samples).ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            // The caller is `_ = EndAsync()`, so without this the failure disappears entirely
+            // and the app simply looks like it dictated nothing.
+            _trace?.Invoke($"process: FAILED {e.GetType().Name}: {e.Message}");
         }
         finally
         {
@@ -208,7 +241,13 @@ public sealed class DictationEngine : IAsyncDisposable
 
     private async Task ProcessAsync(List<float>? samples)
     {
-        if (samples is null || samples.Count == 0) return;
+        if (samples is null || samples.Count == 0)
+        {
+            _trace?.Invoke($"process: nothing captured ({samples?.Count ?? 0} samples)");
+            return;
+        }
+
+        _trace?.Invoke($"process: {samples.Count} samples ({samples.Count / (double)AudioChunk.SampleRate:0.00}s)");
 
         // Nothing else does this, and a transcriber that was never loaded does not complain —
         // it returns empty text, so every dictation silently produces nothing while the hotkey,
@@ -216,6 +255,7 @@ public sealed class DictationEngine : IAsyncDisposable
         // one branch after the first utterance.
         if (!_transcriber.IsReady && !await _transcriber.LoadAsync(CancellationToken.None).ConfigureAwait(false))
         {
+            _trace?.Invoke("process: the speech model could not be loaded");
             return;
         }
 
@@ -240,7 +280,13 @@ public sealed class DictationEngine : IAsyncDisposable
         }
 
         var raw = string.Join(' ', transcripts);
-        if (string.IsNullOrWhiteSpace(raw)) return;
+        _trace?.Invoke($"process: {pieces.Count} segment(s) decoded to {raw.Length} chars");
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            _trace?.Invoke("process: decoded nothing — silence, or the wrong microphone");
+            return;
+        }
 
         // The dictionary runs last and unconditionally. Biasing only raises the odds of the
         // right word; this is the pass that guarantees it.
@@ -254,7 +300,9 @@ public sealed class DictationEngine : IAsyncDisposable
             Corrections: applied);
 
         Completed?.Invoke(this, result);
-        await _injector.InjectAsync(corrected, CancellationToken.None).ConfigureAwait(false);
+
+        var injected = await _injector.InjectAsync(corrected, CancellationToken.None).ConfigureAwait(false);
+        _trace?.Invoke($"process: injected={injected} text=\"{corrected}\"");
     }
 
     private void SetState(DictationState state)

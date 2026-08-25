@@ -1,3 +1,4 @@
+using System.Globalization;
 using Murmur.Abstractions;
 using Murmur.Core;
 using Murmur.Dictionary;
@@ -79,7 +80,9 @@ public sealed class Composition : IAsyncDisposable
 
             engine = new DictationEngine(
                 capture!, hotkey!, transcriber, injector!,
-                () => dictionary.Entries);
+                () => dictionary.Entries,
+                clock: null,
+                trace: Trace);
 
             // Warm the model now rather than on the first keypress: loading Parakeet takes
             // 7-10 seconds, and charging that to the user's first dictation reads as a hang.
@@ -114,6 +117,35 @@ public sealed class Composition : IAsyncDisposable
         }
 
         return new Composition(settings, dictionary, transcripts, engine, available);
+    }
+
+    /// <summary>Where the dictation log is written.</summary>
+    public static string LogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Murmur", "murmur.log");
+
+    /// <summary>
+    /// Appends one diagnostic line, and never lets logging break a dictation.
+    /// </summary>
+    /// <remarks>
+    /// The whole dictation path is reached through a fire-and-forget call, so a failure in it
+    /// leaves no trace anywhere while the UI carries on looking healthy. This file is the only
+    /// way to tell, after the fact, whether the microphone heard nothing, the model decoded
+    /// nothing, or the text was produced and simply never typed.
+    /// </remarks>
+    private static void Trace(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            File.AppendAllText(
+                LogPath,
+                string.Create(CultureInfo.InvariantCulture, $"{DateTimeOffset.Now:HH:mm:ss} {message}{Environment.NewLine}"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Diagnostics must never be the reason dictation fails.
+        }
     }
 
     /// <inheritdoc />
