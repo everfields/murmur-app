@@ -22,7 +22,7 @@ Console.OutputEncoding = Encoding.UTF8;
 var stage = args.Length > 0 ? args[0] : "all";
 var failures = 0;
 
-if (stage is "all" or "hook") failures += HookCheck();
+if (stage is "all" or "hook") failures += HookCheck(ConfiguredKey());
 if (stage is "all" or "audio") failures += MicrophoneCheck();
 if (stage is "all" or "inject") failures += InjectionCheck();
 if (stage is "all" or "model") failures += ModelCheck();
@@ -31,11 +31,23 @@ Console.WriteLine();
 Console.WriteLine(failures == 0 ? "hardware-check: PASS" : $"hardware-check: {failures} FAILED");
 return failures == 0 ? 0 : 1;
 
-static int HookCheck()
+/// <summary>The key the user actually configured, so the check tests their setup.</summary>
+/// <remarks>
+/// Reading the real settings file matters: "the hook works" is worthless if it was only ever
+/// proven for the default key and the user rebound it to something else.
+/// </remarks>
+static PushToTalkKey ConfiguredKey()
+{
+    var configured = new AppSettings(AppSettings.DefaultPath).Data.PushToTalkKey;
+    return (PushToTalkKey)configured;
+}
+
+static int HookCheck(PushToTalkKey key)
 {
     Console.WriteLine("== keyboard hook ==");
+    Console.WriteLine($"  configured key: {key} (0x{(int)key:X2})");
 
-    using var hook = new PushToTalkHook { Key = PushToTalkKey.RightControl };
+    using var hook = new PushToTalkHook { Key = key };
 
     var pressed = 0;
     var released = 0;
@@ -47,7 +59,7 @@ static int HookCheck()
 
     // The hook ignores only events carrying its own InjectedTag, so untagged SendInput travels
     // exactly the path a physical keypress does.
-    Keyboard.Tap(Keyboard.VkRightControl, holdMs: 250);
+    Keyboard.Tap((int)key, holdMs: 250);
     Thread.Sleep(400);
 
     failures += Check($"press fired (got {pressed})", pressed == 1);
@@ -55,20 +67,31 @@ static int HookCheck()
 
     // The OS re-fires key-down while a key is held; only the first is a press.
     pressed = released = 0;
-    Keyboard.Down(Keyboard.VkRightControl);
-    Keyboard.Down(Keyboard.VkRightControl);
-    Keyboard.Up(Keyboard.VkRightControl);
+    Keyboard.Down((int)key);
+    Keyboard.Down((int)key);
+    Keyboard.Up((int)key);
     Thread.Sleep(400);
 
     failures += Check($"held key counts as one press (got {pressed})", pressed == 1);
 
-    // Left Ctrl shares a scan code with Right Ctrl and differs only by the extended flag, so
-    // this is the case a naive Normalize gets wrong.
-    pressed = 0;
-    Keyboard.Tap(Keyboard.VkLeftControl, holdMs: 80);
-    Thread.Sleep(300);
+    // The left-hand twin of each modifier shares a scan code with its right-hand counterpart
+    // and differs only by the extended flag, so this is the case a naive Normalize gets wrong.
+    var twin = key switch
+    {
+        PushToTalkKey.RightControl => Keyboard.VkLeftControl,
+        PushToTalkKey.RightShift => Keyboard.VkLeftShift,
+        PushToTalkKey.RightAlt => Keyboard.VkLeftAlt,
+        _ => 0,
+    };
 
-    failures += Check($"left ctrl does not trigger dictation (got {pressed})", pressed == 0);
+    if (twin != 0)
+    {
+        pressed = 0;
+        Keyboard.Tap(twin, holdMs: 80);
+        Thread.Sleep(300);
+
+        failures += Check($"the left-hand twin does not trigger dictation (got {pressed})", pressed == 0);
+    }
 
     hook.StopListening();
     return failures;
@@ -328,6 +351,9 @@ internal static class Keyboard
 {
     public const int VkRightControl = 0xA3;
     public const int VkLeftControl = 0xA2;
+    public const int VkRightShift = 0xA1;
+    public const int VkLeftShift = 0xA0;
+    public const int VkLeftAlt = 0xA4;
 
     private const uint InputKeyboard = 1;
     private const uint KeyEventExtended = 0x0001;
@@ -377,9 +403,11 @@ internal static class Keyboard
     {
         var flags = up ? KeyEventKeyUp : 0;
 
-        // Right Ctrl is an extended key. Without the flag the hook's Normalize sees a neutral
-        // VK_CONTROL and resolves it to *left* Ctrl, so the check would silently test nothing.
-        if (key is VkRightControl) flags |= KeyEventExtended;
+        // Right Ctrl and Right Alt are extended keys; without the flag the hook's Normalize
+        // sees a neutral VK_CONTROL/VK_MENU and resolves it to the *left* one, so the check
+        // would silently test nothing. Right Shift is deliberately absent: Microsoft documents
+        // it as NOT extended, identified instead by scan code 0x36, which MapVirtualKey gives us.
+        if (key is VkRightControl or 0xA5) flags |= KeyEventExtended;
 
         var input = new Input
         {

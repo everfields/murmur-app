@@ -329,10 +329,43 @@ public sealed class VuMeter : Control
         base.OnDetachedFromVisualTree(e);
     }
 
+    /// <summary>
+    /// Quietest input that still shows on the scale, in dBFS.
+    /// </summary>
+    /// <remarks>
+    /// -40 dBFS is an RMS of 0.01, which is about what a laptop microphone reports for an empty
+    /// room. Putting the floor there keeps ambient noise pinned at zero while leaving the whole
+    /// scale for speech.
+    /// </remarks>
+    private const double FloorDecibels = -40;
+
+    /// <summary>
+    /// Converts a linear RMS amplitude into needle deflection.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Deflection has to be logarithmic, because hearing is.</b> Ordinary speech into a
+    /// laptop microphone lands around 0.02–0.15 RMS, so driving the needle with that value
+    /// directly moves it 2–15% of the way across — the meter reads as broken while someone is
+    /// talking straight into it, which is exactly how this was found.
+    /// </para>
+    /// <para>
+    /// On this scale a quiet room sits at ~2%, conversational speech around half, and only a
+    /// genuinely loud passage approaches the end stop.
+    /// </para>
+    /// </remarks>
+    private static double Deflection(double rms)
+    {
+        if (rms <= 0) return 0;
+
+        var decibels = 20 * Math.Log10(rms);
+        return Math.Clamp((decibels - FloorDecibels) / -FloorDecibels, 0, 1);
+    }
+
     /// <summary>Steps the movement one frame toward the current level.</summary>
     private void AdvanceNeedle()
     {
-        var target = Math.Clamp(Level, 0, 1);
+        var target = Deflection(Level);
         var rising = target > _needle;
         var time = rising ? Tokens.Motion.NeedleAttackSeconds : Tokens.Motion.NeedleReleaseSeconds;
 
