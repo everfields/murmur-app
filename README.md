@@ -6,6 +6,12 @@ whatever text field has focus. A Wispr Flow-shaped app, built native and fully o
 **Status:** working skeleton. Builds, launches, arms the hotkey, transcribes, injects.
 Branding and the LLM cleanup tier are the next passes.
 
+**There is a Windows port** under [`windows/`](windows/README.md) — a separate C#/Avalonia
+implementation sharing only the dictionary contract. It builds, tests and self-tests on real
+Windows hardware; nobody has dictated with it yet. Windows has no `SpeechAnalyzer`, so it
+runs Parakeet v3 (multilingual, 25 European languages) through sherpa-onnx, which has to be
+downloaded first: [`docs/PARAKEET-WINDOWS.md`](docs/PARAKEET-WINDOWS.md).
+
 ---
 
 ## Coexisting with another dictation app

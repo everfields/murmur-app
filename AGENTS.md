@@ -15,16 +15,20 @@ whatever had focus. Two independent implementations:
 |---|---|---|
 | Language | Swift 6 | C# / .NET 10 |
 | UI | SwiftUI | Avalonia |
-| Speech | Apple `SpeechAnalyzer`, or Parakeet via FluidAudio | Parakeet via sherpa-onnx |
+| Speech | Apple `SpeechAnalyzer`, or Parakeet via FluidAudio | Parakeet v3 (multilingual) via sherpa-onnx |
 | Location | repo root | `windows/` |
 
 **The macOS app works and is in daily use.**
 
-**The Windows app is complete but has never run on real hardware.** Every layer exists;
-CI builds it, runs 63 tests, publishes a single-file executable, launches it on Windows and
-confirms the platform layer loads and constructs. What has never happened is a person
-holding the key and speaking into a microphone. Describe it that way — not as "working",
-not as "unfinished".
+**The Windows app runs on real Windows hardware, but nobody has dictated with it yet.** On a
+physical machine — Lenovo ThinkPad, Core Ultra 7 165H, 32 GB RAM, Windows 11 build 26100,
+x64, .NET SDK 10.0.204 — the whole solution including `Murmur.Platform.Windows` builds at
+zero warnings with `-warnaserror`, `dotnet test Murmur.sln` is 68 passed / 0 failed,
+`--selftest` reports all 11 checks ok against the real platform layer, and Parakeet
+transcribes the model's English, Spanish, French and German test clips correctly. What has
+still never happened is a person holding the key and speaking into a microphone. Describe it
+that way — not as "working", not as "unfinished", and **not** as "never run on real
+hardware", which was true until this was measured and is now wrong.
 
 ---
 
@@ -143,6 +147,21 @@ push-to-talk there — and especially suppressing it — breaks typing `@`, `€
 those users. Default is **Right Ctrl**, and the hook **observes without swallowing**: if the
 key-down is swallowed and the key-up escapes, the target app believes Ctrl is held forever.
 
+**The model is multilingual and the search order encodes that.** The app looks for
+`models\parakeet-v3\` — 25 European languages, Spanish included — before falling back to
+`models\parakeet-v2\`, English-only, and it checks `%LOCALAPPDATA%\Murmur\` before the app
+folder for each. Variant-major on purpose: a stale English-only copy beside the executable
+must not shadow a multilingual one the user just installed. There is **no language setting**
+anywhere; the model identifies the language itself, and the sherpa-onnx configuration is
+identical for both variants. Don't add a locale field. Download routes — including a GitHub
+mirror for networks that block `huggingface.co` — are in `docs/PARAKEET-WINDOWS.md`.
+
+**Performance numbers in old comments are wrong.** Measured on a Core Ultra 7 165H with v3
+int8: **6–8× real time**, not 40×; **~725 MB resident**, not ~2 GB; **7.5–10 s model load**,
+not 2 s. Threads: 4–8 is a plateau, 12 and 16 are much worse, so the shipped 4 stays. If you
+find "40×", "2 GB" or "eight measured slower than four" anywhere, it is stale — the measured
+figures live in `docs/PARAKEET-WINDOWS.md`.
+
 **UI Automation cannot inject text.** `TextPattern` is documented read-only and
 `ValuePattern` replaces a whole field rather than inserting at the caret. `SendInput` is the
 primary path, not a fallback.
@@ -193,14 +212,15 @@ lookahead, `\p{L}`, and `$1`–`$9` in replacements. Nothing else.
 
 ## What no amount of CI can verify
 
-On Windows, nobody has yet held the key and spoken. Specifically unverified:
+On Windows, nobody has yet held the key and spoken. Build, tests, `--selftest` and
+file-based transcription are all now verified on a real machine; these are not:
 
 - Text injection landing in a foreground app — runners have an interactive desktop but
   cannot take the foreground.
 - A real microphone: format negotiation, the OS privacy block, unplugging mid-capture.
+  Parakeet is verified on WAV files, not on live capture.
 - The keyboard hook firing on a physical keypress.
-- Parakeet transcribing real speech, and whether ~2 GB resident is tolerable.
 
-Everything those feed into is behind an interface and tested with fakes. The bindings
-themselves are not. **First real-hardware run should start with `--selftest`, then a single
-short dictation into Notepad.**
+Everything those feed into is behind an interface and tested with fakes, and `--selftest`
+confirms each binding constructs. Constructing is not using. **The remaining step is a single
+short spoken dictation into Notepad.**
