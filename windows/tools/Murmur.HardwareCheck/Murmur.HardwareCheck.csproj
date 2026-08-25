@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Not referenced by the app, and never run in CI: every check here needs a real
+    microphone, a real keyboard hook and a real foreground window, none of which a
+    hosted runner has. It IS in the solution so it compiles on every build — a manual
+    tool that stops compiling is a manual tool nobody runs again.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <NoWarn>$(NoWarn);CS1591;CA1031;CA1303;CA1812;CA5392</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Murmur.Core\Murmur.Core.csproj" />
+    <ProjectReference Include="..\..\src\Murmur.Speech\Murmur.Speech.csproj" />
+    <ProjectReference Include="..\..\src\Murmur.Platform.Windows\Murmur.Platform.Windows.csproj" />
+  </ItemGroup>
+
+</Project>
