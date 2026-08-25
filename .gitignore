@@ -22,3 +22,6 @@ artifacts/
 models/
 *.onnx
 *.nemo
+
+# Claude Code local settings (contains credentials)
+.claude/settings.local.json
