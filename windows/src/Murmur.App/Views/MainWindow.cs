@@ -301,8 +301,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        // The button is a convenience; the hotkey is the real trigger. Both funnel through
-        // the same engine so there is only ever one state machine.
+        // With no push-to-talk key configured — the default — this button is the only way to
+        // start dictation. It funnels through the same engine as the hotkey, so there is only
+        // ever one state machine whichever of them is in use.
         _composition.Engine.TogglePushToTalk();
         SyncFromEngine();
     }

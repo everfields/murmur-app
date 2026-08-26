@@ -23,7 +23,7 @@ whatever had focus. Two independent implementations:
 **The Windows app runs on real Windows hardware, but nobody has dictated with it yet.** On a
 physical machine — Lenovo ThinkPad, Core Ultra 7 165H, 32 GB RAM, Windows 11 build 26100,
 x64, .NET SDK 10.0.204 — the whole solution including `Murmur.Platform.Windows` builds at
-zero warnings with `-warnaserror`, `dotnet test Murmur.sln` is 68 passed / 0 failed,
+zero warnings with `-warnaserror`, `dotnet test Murmur.sln` is 112 passed / 0 failed,
 `--selftest` reports all 11 checks ok against the real platform layer, and Parakeet
 transcribes the model's English, Spanish, French and German test clips correctly. What has
 still never happened is a person holding the key and speaking into a microphone. Describe it
@@ -142,10 +142,17 @@ them as load-bearing. Full detail in `windows/README.md` and `docs/PARAKEET-WIND
 | `Avalonia.Headless.XUnit` | 11.3.20 | 12.x requires xUnit **v3**, a different package line |
 | `org.k2fsa.sherpa.onnx` | 1.13.5 | Bundles ONNX Runtime — never also reference `Microsoft.ML.OnnxRuntime` |
 
+**Windows ships with no push-to-talk key at all.** Right Shift was the default and had to be
+withdrawn — it is a primary typing key, so dictation fired on capital letters. Recording is
+started from the app (RECORD, or the tray) until a key is chosen for a better reason than
+"it was free". `PushToTalkKeys.Sanitize` maps a stored Right Shift to off on load, so an old
+`settings.json` cannot keep triggering. Off installs no `WH_KEYBOARD_LL` hook at all.
+
 **Right Alt is AltGr** on German, Polish, UK, Nordic and most Latin-American layouts. Binding
 push-to-talk there — and especially suppressing it — breaks typing `@`, `€`, `\`, `|` for
-those users. Default is **Right Ctrl**, and the hook **observes without swallowing**: if the
-key-down is swallowed and the key-up escapes, the target app believes Ctrl is held forever.
+those users. Right Ctrl is the safest real key, and the hook **observes without swallowing**:
+if the key-down is swallowed and the key-up escapes, the target app believes Ctrl is held
+forever.
 
 **The model is multilingual and the search order encodes that.** The app looks for
 `models\parakeet-v3\` — 25 European languages, Spanish included — before falling back to

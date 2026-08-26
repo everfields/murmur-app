@@ -12,27 +12,43 @@ namespace Murmur.App.Views;
 /// <summary>Settings: the hotkey and the model.</summary>
 public sealed class SettingsWindow : Window
 {
+    private const string OffNote =
+        "No global key. Start and stop dictation with RECORD in the Murmur window, or from "
+      + "the tray icon.";
+
+    private const string KeyNote =
+        "Hold this key anywhere to dictate. The key is passed through to the focused app "
+      + "rather than swallowed, so it never gets stuck down.";
+
     /// <summary>
-    /// The keys offered, in recommendation order.
+    /// The trigger options, in recommendation order.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>OFF is first and is what a new install gets.</b> Every key that is comfortable to
+    /// hold is also a key people press for other reasons: Right Shift was on this list and
+    /// had to be withdrawn, because dictation fired on every capital letter.
+    /// </para>
+    /// <para>
     /// Right Alt is included but listed last and carries a warning: on German, Polish, UK,
     /// Nordic and most Latin-American layouts it is AltGr, and binding push-to-talk there
     /// breaks typing <c>@</c>, <c>€</c>, <c>\</c> and <c>|</c>.
+    /// </para>
     /// </remarks>
     private static readonly (int Key, string Label, string? Warning)[] Keys =
     [
-        (0xA3, "RIGHT CTRL", null),
-        (0xA1, "RIGHT SHIFT", null),
-        (0x14, "CAPS LOCK", null),
-        (0x7C, "F13", null),
-        (0xA5, "RIGHT ALT", "Right Alt is AltGr on many European layouts — binding it here "
-                          + "will interfere with typing @, €, \\ and |."),
+        (PushToTalkKeys.None, "OFF", null),
+        (PushToTalkKeys.RightControl, "RIGHT CTRL", null),
+        (PushToTalkKeys.CapsLock, "CAPS LOCK", null),
+        (PushToTalkKeys.F13, "F13", null),
+        (PushToTalkKeys.RightAlt, "RIGHT ALT", "Right Alt is AltGr on many European layouts — "
+                                             + "binding it here will interfere with typing @, €, \\ and |."),
     ];
 
     private readonly AppSettings _settings;
     private readonly StackPanel _keyRow;
     private readonly TextBlock _keyWarning;
+    private readonly TextBlock _keyNote;
 
     /// <summary>Builds the settings window.</summary>
     public SettingsWindow(AppSettings settings)
@@ -61,6 +77,8 @@ public sealed class SettingsWindow : Window
             IsVisible = false,
         };
 
+        _keyNote = Note(OffNote);
+
         foreach (var (key, label, warning) in Keys)
         {
             var button = new TransportKey { Content = label, EngagedColor = Tokens.Colors.Ink };
@@ -88,8 +106,7 @@ public sealed class SettingsWindow : Window
                 {
                     _keyRow,
                     _keyWarning,
-                    Note("Hold this key anywhere to dictate. The key is passed through to the "
-                       + "focused app rather than swallowed, so it never gets stuck down."),
+                    _keyNote,
                 },
             }),
 
@@ -184,6 +201,10 @@ public sealed class SettingsWindow : Window
 
         _keyWarning.Text = warning ?? string.Empty;
         _keyWarning.IsVisible = warning is not null;
+
+        // "Hold this key anywhere to dictate" under a row where OFF is engaged would be a
+        // straightforward lie about how to start recording.
+        _keyNote.Text = key == PushToTalkKeys.None ? OffNote : KeyNote;
 
         if (_settings.Data.PushToTalkKey != key) Save(_settings.Data with { PushToTalkKey = key });
     }

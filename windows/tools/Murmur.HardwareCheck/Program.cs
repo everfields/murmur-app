@@ -38,12 +38,26 @@ return failures == 0 ? 0 : 1;
 
 /// <summary>The key the user actually configured, so the check tests their setup.</summary>
 /// <remarks>
+/// <para>
 /// Reading the real settings file matters: "the hook works" is worthless if it was only ever
 /// proven for the default key and the user rebound it to something else.
+/// </para>
+/// <para>
+/// There is no default key any more, and "push-to-talk is off" is not something this tool can
+/// exercise — so it falls back to Right Ctrl and says so. The point of the check is that the
+/// hook mechanism still works for whenever a key is chosen again.
+/// </para>
 /// </remarks>
 static PushToTalkKey ConfiguredKey()
 {
     var configured = new AppSettings(AppSettings.DefaultPath).Data.PushToTalkKey;
+
+    if (configured == PushToTalkKeys.None)
+    {
+        Console.WriteLine("  push-to-talk is off in settings; exercising the hook with Right Ctrl.");
+        return PushToTalkKey.RightControl;
+    }
+
     return (PushToTalkKey)configured;
 }
 
@@ -84,7 +98,6 @@ static int HookCheck(PushToTalkKey key)
     var twin = key switch
     {
         PushToTalkKey.RightControl => Keyboard.VkLeftControl,
-        PushToTalkKey.RightShift => Keyboard.VkLeftShift,
         PushToTalkKey.RightAlt => Keyboard.VkLeftAlt,
         _ => 0,
     };
@@ -595,8 +608,6 @@ internal static class Keyboard
 {
     public const int VkRightControl = 0xA3;
     public const int VkLeftControl = 0xA2;
-    public const int VkRightShift = 0xA1;
-    public const int VkLeftShift = 0xA0;
     public const int VkLeftAlt = 0xA4;
 
     private const uint InputKeyboard = 1;
@@ -649,8 +660,7 @@ internal static class Keyboard
 
         // Right Ctrl and Right Alt are extended keys; without the flag the hook's Normalize
         // sees a neutral VK_CONTROL/VK_MENU and resolves it to the *left* one, so the check
-        // would silently test nothing. Right Shift is deliberately absent: Microsoft documents
-        // it as NOT extended, identified instead by scan code 0x36, which MapVirtualKey gives us.
+        // would silently test nothing.
         if (key is VkRightControl or 0xA5) flags |= KeyEventExtended;
 
         var input = new Input

@@ -385,11 +385,33 @@ public sealed class AppSettingsTests : IDisposable
     }
 
     [Fact]
-    public void Defaults_to_right_ctrl_not_right_alt()
+    public void Defaults_to_no_push_to_talk_key()
     {
-        // Right Alt is AltGr on most European layouts; binding push-to-talk there breaks
-        // typing @, €, \ and |. This default is a correctness decision, not a preference.
-        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(0xA3);
+        // A key nobody chose is a key that fires while the user is doing something else.
+        // Right Shift was the demonstration: bound by default, it triggered on capital
+        // letters. Until a key is picked deliberately, recording starts from the app.
+        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(PushToTalkKeys.None);
+    }
+
+    [Fact]
+    public void A_settings_file_still_naming_right_shift_is_read_as_off()
+    {
+        // The setting outlives the release that offered it. Without this, removing Right
+        // Shift from the UI would leave every existing user still triggering on capitals,
+        // with no control left in the app to turn it off.
+        File.WriteAllText(_path, """{ "PushToTalkKey": 161 }""");
+
+        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(PushToTalkKeys.None);
+    }
+
+    [Fact]
+    public void A_hand_edited_key_the_app_never_offered_is_left_alone()
+    {
+        // Only the withdrawn key is rewritten. Somebody who put F8 in the file by hand meant
+        // it, and silently disabling it would be the more surprising behaviour.
+        File.WriteAllText(_path, """{ "PushToTalkKey": 119 }""");
+
+        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(0x77);
     }
 
     [Fact]
@@ -425,6 +447,6 @@ public sealed class AppSettingsTests : IDisposable
     {
         File.WriteAllText(_path, "{ not json at all");
 
-        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(0xA3);
+        new AppSettings(_path).Data.PushToTalkKey.ShouldBe(PushToTalkKeys.None);
     }
 }

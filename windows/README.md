@@ -55,10 +55,23 @@ publishing works, with open bugs reporting an exe that won't launch.
 
 **.NET 10, not .NET 8.** .NET 8 reaches end-of-life on **2026-11-10**.
 
-**Right Ctrl is the default hotkey, not Right Alt.** Right Alt is AltGr on German, Polish,
-UK, Nordic and most Latin-American layouts — it is how those users type `@`, `€`, `\`, `|`.
-Binding push-to-talk there would break basic typing for a large fraction of users. Right
-Ctrl produces no character on any layout.
+**There is no default push-to-talk key — dictation is started from the app.** Right Shift was
+offered, and using it for a day settled the question: it is a primary typing key, so dictation
+armed itself on every capital letter and interrupted the work it was meant to serve. The
+answer is not to shuffle the problem onto the next key. Push-to-talk ships **off**; RECORD in
+the window (or the tray) starts and stops a dictation, and a key gets chosen when there is a
+reason to prefer a particular one. `PushToTalkKeys.Sanitize` turns a stored Right Shift into
+"off" on load, because the setting outlives the release that offered it — otherwise removing
+the option from the UI would leave existing users still firing on capitals with no control
+left to stop it.
+
+Off means *no hook at all*, not a hook bound to nothing: `WH_KEYBOARD_LL` sits on the critical
+path of every keystroke on the machine, so the honest way to be off is to be out of the chain.
+
+**If you do pick a key, not Right Alt.** Right Alt is AltGr on German, Polish, UK, Nordic and
+most Latin-American layouts — it is how those users type `@`, `€`, `\`, `|`. Binding
+push-to-talk there would break basic typing for a large fraction of users. Right Ctrl is the
+best of the real keys: it produces no character on any layout.
 
 **The hotkey is observed, never swallowed.** The macOS build consumes Right Option because
 on macOS that key types characters. On Windows, suppression buys nothing and risks a much
@@ -104,8 +117,8 @@ windows/
 │  ├─ Murmur.App/                 Avalonia UI                    net10.0
 │  └─ Murmur.Platform.Windows/    the ONLY Win32 code            net10.0-windows
 ├─ tests/
-│  ├─ Murmur.Dictionary.Tests/    the shared vectors             24 tests
-│  ├─ Murmur.Core.Tests/          engine, chunking, storage      38 tests
+│  ├─ Murmur.Dictionary.Tests/    the shared vectors             52 tests
+│  ├─ Murmur.Core.Tests/          engine, chunking, storage      42 tests
 │  └─ Murmur.App.Tests/           headless Avalonia UI           18 tests
 └─ tools/
    └─ Murmur.HardwareCheck/       hook, mic, injection           net10.0-windows
@@ -135,7 +148,7 @@ projects, behind an interface.
 ```bash
 cd windows
 dotnet build Murmur.sln --no-incremental -warnaserror   # 0 warnings
-dotnet test  Murmur.sln                                 # 68 passed, 0 failed
+dotnet test  Murmur.sln                                 # 112 passed, 0 failed
 ```
 
 Then `Murmur.App --selftest` — 11 checks, and the only way to exercise the reflection-loaded
@@ -147,7 +160,7 @@ builds and tests normally, including the full UI suite:
 
 ```bash
 cd windows
-dotnet test Murmur.CrossPlatform.slnf -c Release      # ~0.5s, all 68 tests
+dotnet test Murmur.CrossPlatform.slnf -c Release      # ~0.5s, all 112 tests
 ```
 
 `--no-incremental` is not optional in CI. Roslyn does not re-emit analyzer warnings on an
@@ -200,7 +213,7 @@ Windows 11 build 26100, x64, .NET SDK 10.0.204:
 - `dotnet build Murmur.sln --no-incremental -warnaserror` succeeds for the whole solution at
   **zero warnings**, `Murmur.Platform.Windows` included — the one project no macOS or Linux
   machine can compile.
-- `dotnet test Murmur.sln` reports **68 passed, 0 failed** (24 dictionary, 26 core, 18 UI).
+- `dotnet test Murmur.sln` reports **112 passed, 0 failed** (52 dictionary, 42 core, 18 UI).
 - `Murmur.App --selftest` reports **all 11 checks ok** against the real platform layer:
   the Windows platform assembly loads from the bundle, audio capture constructs, the text
   injector constructs, the hotkey source constructs on Right Ctrl, and the model resolves as

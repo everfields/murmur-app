@@ -7,15 +7,31 @@ namespace Murmur.Platform.Windows;
 public enum PushToTalkKey
 {
     /// <summary>
-    /// Right Ctrl — <b>the default, and the right one.</b>
+    /// No global trigger — <b>the default.</b> Recording is started from the app.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A push-to-talk key is only free if the user never presses it for anything else, and
+    /// that is a harder property to find than it looks. <b>Right Shift was offered and then
+    /// withdrawn:</b> it is a primary typing key, so dictation armed itself on capital
+    /// letters and interrupted normal work all day.
+    /// </para>
+    /// <para>
+    /// With no key set, <see cref="PushToTalkHook.Start"/> installs no hook at all. That is
+    /// worth more than binding something inert: a <c>WH_KEYBOARD_LL</c> hook sees every
+    /// keystroke on the machine and is on the critical path of every one of them, so the
+    /// honest way to be off is to not be in the chain.
+    /// </para>
+    /// </remarks>
+    None = 0,
+
+    /// <summary>
+    /// Right Ctrl — <b>the best of the real keys.</b>
     /// </summary>
     /// <remarks>
     /// Right Ctrl produces no character on any keyboard layout, so holding it is always safe.
     /// </remarks>
     RightControl = 0xA3,
-
-    /// <summary>Right Shift.</summary>
-    RightShift = 0xA1,
 
     /// <summary>
     /// Right Alt — <b>avoid unless you know the user's layout.</b>
@@ -74,17 +90,12 @@ public sealed class PushToTalkHook : IHotkeySource
 
     private const uint LLKHF_EXTENDED = 0x01;
 
-    private const int VK_SHIFT = 0x10;
     private const int VK_CONTROL = 0x11;
     private const int VK_MENU = 0x12;
-    private const int VK_LSHIFT = 0xA0;
-    private const int VK_RSHIFT = 0xA1;
     private const int VK_LCONTROL = 0xA2;
     private const int VK_RCONTROL = 0xA3;
     private const int VK_LMENU = 0xA4;
     private const int VK_RMENU = 0xA5;
-
-    private const int ScanCodeRightShift = 0x36;
 
     /// <summary>
     /// Stamped into <c>dwExtraInfo</c> on every event this app injects, so our own Ctrl+V
@@ -156,8 +167,18 @@ public sealed class PushToTalkHook : IHotkeySource
     private uint _threadId;
     private volatile bool _isDown;
 
-    /// <summary>Which key triggers dictation.</summary>
-    public PushToTalkKey Key { get; set; } = PushToTalkKey.RightControl;
+    /// <summary>
+    /// Which key triggers dictation, or <see cref="PushToTalkKey.None"/> for no global trigger.
+    /// </summary>
+    public PushToTalkKey Key { get; set; } = PushToTalkKey.None;
+
+    /// <summary>Whether a hook is currently installed.</summary>
+    /// <remarks>
+    /// False while <see cref="Key"/> is <see cref="PushToTalkKey.None"/> even after a
+    /// successful <see cref="Start"/>, which is the distinction "did Start succeed" cannot
+    /// draw on its own.
+    /// </remarks>
+    public bool IsArmed => _thread is not null;
 
     /// <inheritdoc />
     public event EventHandler? Pressed;
@@ -166,9 +187,19 @@ public sealed class PushToTalkHook : IHotkeySource
     public event EventHandler? Released;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// With <see cref="Key"/> set to <see cref="PushToTalkKey.None"/> this installs nothing
+    /// and reports success: there is no trigger to arm, which is a configuration rather than
+    /// a failure. <see cref="IsArmed"/> tells the two apart. An enum value this build does
+    /// not define is treated the same way — that is how a settings file naming a withdrawn
+    /// key fails, rather than by quietly binding it.
+    /// </remarks>
     public bool Start()
     {
         StopListening();
+
+        if (Key == PushToTalkKey.None || !Enum.IsDefined(Key)) return true;
+
         s_instance = this;
 
         using var ready = new ManualResetEventSlim(false);
@@ -290,8 +321,8 @@ public sealed class PushToTalkHook : IHotkeySource
     }
 
     /// <summary>
-    /// Collapses the side-agnostic <c>VK_SHIFT</c>/<c>VK_CONTROL</c>/<c>VK_MENU</c> codes into
-    /// left/right-specific ones.
+    /// Collapses the side-agnostic <c>VK_CONTROL</c>/<c>VK_MENU</c> codes into left/right-specific
+    /// ones.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -301,23 +332,22 @@ public sealed class PushToTalkHook : IHotkeySource
     /// exactly this reason, and so does this.
     /// </para>
     /// <para>
-    /// Right Shift is the awkward one: Microsoft's keyboard-input documentation states it is
-    /// <i>not</i> an extended key and is identified by scan code <c>0x36</c>, while
-    /// AutoHotkey's source insists it must be treated as extended "or there will be problems".
-    /// Both signals are accepted here.
+    /// <c>VK_SHIFT</c> is deliberately not translated: no shift key can be bound, so the
+    /// neutral code cannot match a trigger whichever side it resolves to. It was the awkward
+    /// case — Microsoft's documentation says Right Shift is <i>not</i> extended and is
+    /// identified by scan code <c>0x36</c>, while AutoHotkey's source insists it must be
+    /// treated as extended "or there will be problems" — and that difficulty leaves with it.
     /// </para>
     /// </remarks>
     private static int Normalize(in KBDLLHOOKSTRUCT e)
     {
         var key = (int)e.VirtualKey;
-        var scan = (int)(e.ScanCode & 0xFF);
         var extended = (e.Flags & LLKHF_EXTENDED) != 0;
 
         return key switch
         {
             VK_CONTROL => extended ? VK_RCONTROL : VK_LCONTROL,
             VK_MENU => extended ? VK_RMENU : VK_LMENU,
-            VK_SHIFT => scan == ScanCodeRightShift || extended ? VK_RSHIFT : VK_LSHIFT,
             _ => key,
         };
     }
