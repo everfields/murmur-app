@@ -155,6 +155,43 @@ incremental build, so `-warnaserror` would pass on cached results and prove noth
 
 ---
 
+## Installing it, with a shortcut
+
+`dotnet run` is fine for development, but nobody dictates from a terminal. This publishes the
+app and puts it in the Start Menu and on the Desktop:
+
+```bash
+cd windows
+powershell -ExecutionPolicy Bypass -File tools/install-shortcut.ps1
+# -NoDesktop / -NoStartMenu   just one of the two
+# -SkipPublish                re-point the shortcuts at what is already installed
+# -Uninstall                  remove both shortcuts and the install directory
+```
+
+**Per-user, no administrator rights.** The app lands in `%LOCALAPPDATA%\Murmur\app`, beside
+the `models\`, `settings.json` and `murmur.log` it already keeps in `%LOCALAPPDATA%\Murmur` —
+so uninstalling the app leaves the model (640 MB for v3), the settings and the transcripts
+untouched.
+It publishes with the same switches CI uses, so the exe on the Desktop is the artifact that
+gets smoke-tested on every push.
+
+Two details that are easy to get wrong here:
+
+- **Install the whole publish directory, not just the exe.** The platform layer and NAudio are
+  resolved at run time rather than referenced, so what the publish step arranges beside the exe
+  has to travel with it. `Murmur.App.exe --selftest` is the check that catches a platform layer
+  that did not come along — it fails loudly instead of the app starting to a window whose hotkey
+  never fires.
+- **The shortcut's icon is `Murmur.ico`, copied in next to the exe.** The project sets no
+  `ApplicationIcon`, so the exe carries no embedded icon and Windows would otherwise draw the
+  generic one. Pointing the shortcut at a copy of `Assets\tray.ico` keeps the fix out of the
+  build, which stays on plain `net10.0` for the macOS loop.
+
+The script is ASCII-only on purpose: Windows PowerShell 5.1 reads `.ps1` as ANSI, and an em dash
+in the description string arrives in the shortcut's tooltip as mojibake.
+
+---
+
 ## <a id="honesty"></a>Honesty about what is verified
 
 **Verified on real Windows hardware** — Lenovo ThinkPad, Core Ultra 7 165H, 32 GB RAM,
