@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -51,7 +52,10 @@ public sealed class DictionaryView : UserControl
             },
         };
 
-        _file.Changed += (_, _) => Refresh();
+        // Marshalled for the same reason as the transcript list: the engine reads this file on
+        // every utterance from a background thread, so a Changed raised from there must not
+        // touch controls directly.
+        _file.Changed += (_, _) => Dispatcher.UIThread.Post(Refresh);
         Refresh();
     }
 

@@ -299,7 +299,17 @@ public sealed class DictationEngine : IAsyncDisposable
             Text: corrected,
             Corrections: applied);
 
-        Completed?.Invoke(this, result);
+        // Isolated on purpose. Subscribers here do UI and disk work, and one of them throwing
+        // must not cost the user the text they just dictated — injection is the whole point of
+        // the app, and it happens after this.
+        try
+        {
+            Completed?.Invoke(this, result);
+        }
+        catch (Exception e)
+        {
+            _trace?.Invoke($"process: a Completed subscriber threw {e.GetType().Name}: {e.Message}");
+        }
 
         var injected = await _injector.InjectAsync(corrected, CancellationToken.None).ConfigureAwait(false);
         _trace?.Invoke($"process: injected={injected} text=\"{corrected}\"");

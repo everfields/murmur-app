@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
@@ -48,7 +49,12 @@ public sealed class TranscriptionsView : UserControl
             },
         };
 
-        _store.Changed += (_, _) => Refresh();
+        // Marshalled, because this fires from the dictation pipeline on a background thread:
+        // the engine raises Completed after transcribing, Composition writes the record, and
+        // the store raises Changed still on that thread. Touching a control from there throws
+        // "Call from invalid thread" — which, because the whole path is fire-and-forget, used
+        // to surface as the transcript never being typed and no error anywhere.
+        _store.Changed += (_, _) => Dispatcher.UIThread.Post(Refresh);
         Refresh();
     }
 
