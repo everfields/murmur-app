@@ -73,6 +73,9 @@ public sealed record SettingsData
     /// </remarks>
     public int PushToTalkKey { get; init; } = PushToTalkKeys.None;
 
+    /// <summary>Use Win+Shift+D to start/stop dictation instead of holding a single key.</summary>
+    public bool UseToggleShortcut { get; init; }
+
     /// <summary>Where the speech model lives, or null to search the default locations.</summary>
     public string? ModelDirectory { get; init; }
 

@@ -35,6 +35,8 @@ public sealed class MainWindow : Window
     private readonly TransportKey _transcriptionsKey;
     private readonly TransportKey _dictionaryKey;
     private readonly DispatcherTimer _counterTimer;
+    private readonly TextBlock _shortcutStatus;
+    private readonly BrushedPanel _shortcutBanner;
 
     private Control? _transcriptionsView;
     private Control? _dictionaryView;
@@ -47,6 +49,22 @@ public sealed class MainWindow : Window
     public MainWindow(Composition? composition)
     {
         _composition = composition;
+
+        _shortcutStatus = new TextBlock
+        {
+            FontFamily = Tokens.Fonts.Grotesque,
+            FontSize = Tokens.Fonts.Label,
+            Foreground = Tokens.Brushes.Ink,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(Tokens.Space.Base),
+            IsVisible = false,
+        };
+        _shortcutBanner = new BrushedPanel
+        {
+            Child = _shortcutStatus,
+            Margin = new Thickness(0, 0, 0, Tokens.Space.Base),
+            IsVisible = false,
+        };
 
         Title = "Murmur";
         MinWidth = 720;
@@ -90,6 +108,7 @@ public sealed class MainWindow : Window
         ShowSection(transcriptions: true);
 
         if (_composition?.Engine is not null) _composition.Engine.Start();
+        SyncFromEngine();
     }
 
     private DockPanel BuildLayout()
@@ -98,6 +117,7 @@ public sealed class MainWindow : Window
 
         root.Children.Add(Panels.Docked(BuildTransportPanel(), Dock.Top));
         root.Children.Add(Panels.Docked(BuildSectionKeys(), Dock.Top));
+        root.Children.Add(Panels.Docked(_shortcutBanner, Dock.Top));
 
         if (_composition is not null && !Composition.IsModelInstalled)
         {
@@ -264,6 +284,14 @@ public sealed class MainWindow : Window
         }
 
         var recording = engine.State != DictationState.Idle;
+
+        _shortcutStatus.Text = engine.HotkeyError is { } error
+            ? error + " You can still record with RECORD."
+            : _composition!.Settings.Data.UseToggleShortcut
+                ? "Win + Shift + D: press once to record, again to stop."
+                : null;
+        _shortcutStatus.IsVisible = _shortcutStatus.Text is not null;
+        _shortcutBanner.IsVisible = _shortcutStatus.IsVisible;
 
         _meter.Level = engine.Level;
         _meter.IsActive = recording;

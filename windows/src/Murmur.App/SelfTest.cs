@@ -137,6 +137,10 @@ public static class SelfTest
         failures += Check("hotkey source constructs with Right Ctrl", hotkey is not null);
         hotkey?.Dispose();
 
+        var toggle = PlatformFactory.CreateHotkeySource(PushToTalkKeys.None, useToggleShortcut: true);
+        failures += Check("Win+Shift+D toggle shortcut constructs", toggle is { IsToggle: true });
+        toggle?.Dispose();
+
         return failures;
     }
 

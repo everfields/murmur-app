@@ -24,6 +24,8 @@ namespace Murmur.App;
 /// </remarks>
 public sealed class Composition : IAsyncDisposable
 {
+    private (int Key, bool Toggle) _hotkeySettings;
+
     private Composition(
         AppSettings settings,
         DictionaryFile dictionary,
@@ -36,6 +38,8 @@ public sealed class Composition : IAsyncDisposable
         Transcripts = transcripts;
         Engine = engine;
         IsPlatformAvailable = platformAvailable;
+        _hotkeySettings = (settings.Data.PushToTalkKey, settings.Data.UseToggleShortcut);
+        Settings.Changed += OnSettingsChanged;
     }
 
     /// <summary>User preferences.</summary>
@@ -64,7 +68,7 @@ public sealed class Composition : IAsyncDisposable
         var transcripts = new TranscriptStore(TranscriptStore.DefaultPath);
 
         var capture = PlatformFactory.CreateAudioCapture();
-        var hotkey = PlatformFactory.CreateHotkeySource(settings.Data.PushToTalkKey);
+        var hotkey = PlatformFactory.CreateHotkeySource(settings.Data.PushToTalkKey, settings.Data.UseToggleShortcut);
         var injector = PlatformFactory.CreateTextInjector();
 
         DictationEngine? engine = null;
@@ -119,6 +123,15 @@ public sealed class Composition : IAsyncDisposable
         return new Composition(settings, dictionary, transcripts, engine, available);
     }
 
+    private void OnSettingsChanged(object? sender, EventArgs e)
+    {
+        var selected = (Settings.Data.PushToTalkKey, Settings.Data.UseToggleShortcut);
+        if (_hotkeySettings == selected || Engine is null) return;
+        _hotkeySettings = selected;
+        var source = PlatformFactory.CreateHotkeySource(selected.PushToTalkKey, selected.UseToggleShortcut);
+        if (source is not null) Engine.ChangeHotkey(source);
+    }
+
     /// <summary>Where the dictation log is written.</summary>
     public static string LogPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -151,6 +164,7 @@ public sealed class Composition : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        Settings.Changed -= OnSettingsChanged;
         if (Engine is not null) await Engine.DisposeAsync().ConfigureAwait(false);
     }
 }

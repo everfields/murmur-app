@@ -43,7 +43,7 @@ public sealed record DictationResult(
 public sealed class DictationEngine : IAsyncDisposable
 {
     private readonly IAudioCapture _capture;
-    private readonly IHotkeySource _hotkey;
+    private IHotkeySource _hotkey;
     private readonly ITranscriber _transcriber;
     private readonly ITextInjector _injector;
     private readonly IClock _clock;
@@ -60,6 +60,9 @@ public sealed class DictationEngine : IAsyncDisposable
 
     /// <summary>Most recent input level, 0…1. Drives the meter.</summary>
     public float Level { get; private set; }
+
+    /// <summary>Registration failure to display to the user, or null when available.</summary>
+    public string? HotkeyError { get; private set; }
 
     /// <summary>Raised when a dictation completes and produced text.</summary>
     public event EventHandler<DictationResult>? Completed;
@@ -112,7 +115,29 @@ public sealed class DictationEngine : IAsyncDisposable
 
     /// <summary>Arms the hotkey.</summary>
     /// <returns>False if the hook could not be installed.</returns>
-    public bool Start() => _hotkey.Start();
+    public bool Start()
+    {
+        var started = _hotkey.Start();
+        HotkeyError = started ? null : _hotkey.RegistrationError ?? "The dictation shortcut could not be activated.";
+        _trace?.Invoke(started ? "hotkey: registered" : $"hotkey: {HotkeyError}");
+        Changed?.Invoke(this, EventArgs.Empty);
+        return started;
+    }
+
+    /// <summary>Applies a shortcut change immediately, finishing any current recording.</summary>
+    public void ChangeHotkey(IHotkeySource hotkey)
+    {
+        ArgumentNullException.ThrowIfNull(hotkey);
+        if (ReferenceEquals(_hotkey, hotkey)) return;
+        _hotkey.Pressed -= OnPressed;
+        _hotkey.Released -= OnReleased;
+        _hotkey.Dispose();
+        if (State == DictationState.Recording) _ = EndAsync();
+        _hotkey = hotkey;
+        _hotkey.Pressed += OnPressed;
+        _hotkey.Released += OnReleased;
+        Start();
+    }
 
     /// <summary>
     /// Starts or stops recording from a button rather than the hotkey.
@@ -127,9 +152,16 @@ public sealed class DictationEngine : IAsyncDisposable
         else if (State == DictationState.Recording) _ = EndAsync();
     }
 
-    private void OnPressed(object? sender, EventArgs e) => _ = BeginAsync();
+    private void OnPressed(object? sender, EventArgs e)
+    {
+        if (_hotkey.IsToggle) TogglePushToTalk();
+        else _ = BeginAsync();
+    }
 
-    private void OnReleased(object? sender, EventArgs e) => _ = EndAsync();
+    private void OnReleased(object? sender, EventArgs e)
+    {
+        if (!_hotkey.IsToggle) _ = EndAsync();
+    }
 
     private async Task BeginAsync()
     {

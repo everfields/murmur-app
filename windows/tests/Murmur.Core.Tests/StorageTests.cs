@@ -391,6 +391,18 @@ public sealed class AppSettingsTests : IDisposable
         // Right Shift was the demonstration: bound by default, it triggered on capital
         // letters. Until a key is picked deliberately, recording starts from the app.
         new AppSettings(_path).Data.PushToTalkKey.ShouldBe(PushToTalkKeys.None);
+        new AppSettings(_path).Data.UseToggleShortcut.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Toggle_shortcut_survives_restart_without_changing_other_preferences()
+    {
+        var settings = new AppSettings(_path);
+        settings.Update(settings.Data with { UseToggleShortcut = true, KeepHistory = false });
+        var reopened = new AppSettings(_path);
+        reopened.Data.UseToggleShortcut.ShouldBeTrue();
+        reopened.Data.PushToTalkKey.ShouldBe(PushToTalkKeys.None);
+        reopened.Data.KeepHistory.ShouldBeFalse();
     }
 
     [Fact]

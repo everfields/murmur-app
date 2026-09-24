@@ -20,6 +20,10 @@ public sealed class SettingsWindow : Window
         "Hold this key anywhere to dictate. The key is passed through to the focused app "
       + "rather than swallowed, so it never gets stuck down.";
 
+    private const string ToggleNote =
+        "Press Win + Shift + D once to start recording, then again to stop and transcribe. "
+      + "Release the keys after each press. Changes apply immediately.";
+
     /// <summary>
     /// The trigger options, in recommendation order.
     /// </summary>
@@ -49,6 +53,7 @@ public sealed class SettingsWindow : Window
     private readonly StackPanel _keyRow;
     private readonly TextBlock _keyWarning;
     private readonly TextBlock _keyNote;
+    private readonly TransportKey _toggleKey;
 
     /// <summary>Builds the settings window.</summary>
     public SettingsWindow(AppSettings settings)
@@ -78,6 +83,13 @@ public sealed class SettingsWindow : Window
         };
 
         _keyNote = Note(OffNote);
+        _toggleKey = new TransportKey
+        {
+            Content = "WIN + SHIFT + D",
+            EngagedColor = Tokens.Colors.Ink,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        _toggleKey.Click += (_, _) => SelectToggleShortcut();
 
         foreach (var (key, label, warning) in Keys)
         {
@@ -87,7 +99,8 @@ public sealed class SettingsWindow : Window
         }
 
         Content = BuildContent();
-        SelectKey(_settings.Data.PushToTalkKey, WarningFor(_settings.Data.PushToTalkKey));
+        if (_settings.Data.UseToggleShortcut) SelectToggleShortcut();
+        else SelectKey(_settings.Data.PushToTalkKey, WarningFor(_settings.Data.PushToTalkKey));
     }
 
     private static string? WarningFor(int key) =>
@@ -99,11 +112,13 @@ public sealed class SettingsWindow : Window
         Spacing = Tokens.Space.Wide,
         Children =
         {
-            Section("PUSH TO TALK", new StackPanel
+            Section("DICTATION SHORTCUT", new StackPanel
             {
                 Spacing = Tokens.Space.Snug,
                 Children =
                 {
+                    _toggleKey,
+                    Note("Or hold a single key to talk:"),
                     _keyRow,
                     _keyWarning,
                     _keyNote,
@@ -194,6 +209,7 @@ public sealed class SettingsWindow : Window
 
     private void SelectKey(int key, string? warning)
     {
+        _toggleKey.IsEngaged = false;
         for (var i = 0; i < Keys.Length; i++)
         {
             ((TransportKey)_keyRow.Children[i]).IsEngaged = Keys[i].Key == key;
@@ -206,7 +222,18 @@ public sealed class SettingsWindow : Window
         // straightforward lie about how to start recording.
         _keyNote.Text = key == PushToTalkKeys.None ? OffNote : KeyNote;
 
-        if (_settings.Data.PushToTalkKey != key) Save(_settings.Data with { PushToTalkKey = key });
+        if (_settings.Data.PushToTalkKey != key || _settings.Data.UseToggleShortcut)
+            Save(_settings.Data with { PushToTalkKey = key, UseToggleShortcut = false });
+    }
+
+    private void SelectToggleShortcut()
+    {
+        _toggleKey.IsEngaged = true;
+        foreach (var button in _keyRow.Children.OfType<TransportKey>()) button.IsEngaged = false;
+        _keyWarning.IsVisible = false;
+        _keyNote.Text = ToggleNote;
+        if (!_settings.Data.UseToggleShortcut || _settings.Data.PushToTalkKey != PushToTalkKeys.None)
+            Save(_settings.Data with { UseToggleShortcut = true, PushToTalkKey = PushToTalkKeys.None });
     }
 
     private void Save(SettingsData data) => _settings.Update(data);

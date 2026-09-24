@@ -46,17 +46,23 @@ public interface IAudioCapture : IAsyncDisposable
     IAsyncEnumerable<AudioChunk> CaptureAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>Raised when the push-to-talk key goes down or comes up.</summary>
+/// <summary>A held key or a global shortcut that activates dictation.</summary>
 public interface IHotkeySource : IDisposable
 {
-    /// <summary>The key is held.</summary>
+    /// <summary>Whether each activation toggles recording instead of requiring a held key.</summary>
+    bool IsToggle => false;
+
+    /// <summary>Why the shortcut could not be registered, if registration failed.</summary>
+    string? RegistrationError => null;
+
+    /// <summary>The held key went down or the toggle shortcut was activated.</summary>
     event EventHandler? Pressed;
 
-    /// <summary>The key was released.</summary>
+    /// <summary>The held key was released. Toggle shortcuts do not need to raise this.</summary>
     event EventHandler? Released;
 
     /// <summary>Begins listening.</summary>
-    /// <returns>False if the hook could not be installed.</returns>
+    /// <returns>False if the hook or shortcut could not be registered.</returns>
     bool Start();
 
     /// <summary>Stops listening.</summary>

@@ -17,7 +17,7 @@ using Murmur.Speech;
 // SendInput path Windows uses for physical keys, and the injection target is a window this
 // process owns, so nothing is typed into the user's other applications.
 //
-// Usage:  Murmur.HardwareCheck [hook|audio|inject|model|all]
+// Usage:  Murmur.HardwareCheck [hook|shortcut|audio|inject|model|all]
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -25,6 +25,7 @@ var stage = args.Length > 0 ? args[0] : "all";
 var failures = 0;
 
 if (stage is "all" or "hook") failures += HookCheck(ConfiguredKey());
+if (stage is "shortcut") failures += ShortcutCheck();
 if (stage is "all" or "audio") failures += MicrophoneCheck();
 if (stage is "all" or "inject") failures += InjectionCheck();
 if (stage is "all" or "model") failures += ModelCheck();
@@ -35,6 +36,61 @@ if (stage is "listen") failures += ListenCheck();
 Console.WriteLine();
 Console.WriteLine(failures == 0 ? "hardware-check: PASS" : $"hardware-check: {failures} FAILED");
 return failures == 0 ? 0 : 1;
+
+// Only exercises the registered chord. No audio is captured and no text is injected.
+static int ShortcutCheck()
+{
+    Console.WriteLine("== Win+Shift+D shortcut ==");
+    using var source = new ToggleDictationHotkey();
+    if (!source.Start())
+    {
+        Console.WriteLine(source.RegistrationError);
+        return Check("shortcut registers", false);
+    }
+    var failures = Check("shortcut registers", true);
+    using var other = new ToggleDictationHotkey();
+    failures += Check("duplicate registration reports a conflict",
+        !other.Start() && other.RegistrationError?.Contains("already in use", StringComparison.Ordinal) == true);
+
+    var activations = 0;
+    using var activated = new AutoResetEvent(false);
+    source.Pressed += (_, _) =>
+    {
+        Interlocked.Increment(ref activations);
+        activated.Set();
+    };
+
+    for (var press = 1; press <= 2; press++)
+    {
+        try
+        {
+            Keyboard.Down(0x5B); // Left Win
+            Keyboard.Down(0xA0); // Left Shift
+            Keyboard.Down(0x44); // D
+            Keyboard.Down(0x44); // auto-repeat must not produce another activation
+            Keyboard.Down(0x44);
+            failures += Check("holding the chord does not fire before release", !activated.WaitOne(150));
+            Keyboard.Up(0x44);
+            failures += Check("waits for modifiers before allowing transcription", !activated.WaitOne(100));
+        }
+        finally
+        {
+            Keyboard.Up(0x44);
+            Keyboard.Up(0xA0);
+            Keyboard.Up(0x5B);
+        }
+        failures += Check($"press {press} produces one activation",
+            activated.WaitOne(2000) && Volatile.Read(ref activations) == press);
+        failures += Check("no repeat activation", !activated.WaitOne(150));
+    }
+
+    source.StopListening();
+    failures += Check("stopping releases the shortcut for another instance", other.Start());
+    other.StopListening();
+    failures += Check("same instance can register again", source.Start());
+    source.StopListening();
+    return failures;
+}
 
 /// <summary>The key the user actually configured, so the check tests their setup.</summary>
 /// <remarks>
@@ -661,7 +717,7 @@ internal static class Keyboard
         // Right Ctrl and Right Alt are extended keys; without the flag the hook's Normalize
         // sees a neutral VK_CONTROL/VK_MENU and resolves it to the *left* one, so the check
         // would silently test nothing.
-        if (key is VkRightControl or 0xA5) flags |= KeyEventExtended;
+        if (key is VkRightControl or 0xA5 or 0x5B or 0x5C) flags |= KeyEventExtended;
 
         var input = new Input
         {

@@ -75,13 +75,14 @@ internal static class PlatformFactory
     public static IAudioCapture? CreateAudioCapture() =>
         Create<IAudioCapture>("WasapiAudioCapture", [null]);
 
-    /// <summary>Creates the low-level keyboard hook, or null off Windows.</summary>
+    /// <summary>Creates a held-key hook or Win+Shift+D shortcut, or null off Windows.</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2075:DynamicallyAccessedMembers",
         Justification = "Murmur.Platform.Windows is published whole and never trimmed.")]
-    public static IHotkeySource? CreateHotkeySource(int virtualKey)
+    public static IHotkeySource? CreateHotkeySource(int virtualKey, bool useToggleShortcut = false)
     {
+        if (useToggleShortcut) return Create<IHotkeySource>("ToggleDictationHotkey", []);
         var hook = Create<IHotkeySource>("PushToTalkHook", []);
         if (hook is null) return null;
 

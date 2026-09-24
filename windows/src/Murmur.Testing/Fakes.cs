@@ -79,6 +79,15 @@ public sealed class FakeAudioCapture : IAudioCapture
 public sealed class FakeHotkeySource : IHotkeySource
 {
     /// <inheritdoc />
+    public bool IsToggle { get; init; }
+
+    /// <summary>Whether registering this fake shortcut should succeed.</summary>
+    public bool CanStart { get; init; } = true;
+
+    /// <inheritdoc />
+    public string? RegistrationError => CanStart ? null : "Shortcut is already in use.";
+
+    /// <inheritdoc />
     public event EventHandler? Pressed;
 
     /// <inheritdoc />
@@ -88,7 +97,7 @@ public sealed class FakeHotkeySource : IHotkeySource
     public bool IsRunning { get; private set; }
 
     /// <inheritdoc />
-    public bool Start() { IsRunning = true; return true; }
+    public bool Start() { IsRunning = CanStart; return CanStart; }
 
     /// <inheritdoc />
     public void StopListening() => IsRunning = false;

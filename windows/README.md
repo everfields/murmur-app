@@ -170,6 +170,31 @@ incremental build, so `-warnaserror` would pass on cached results and prove noth
 
 ## Installing it, with a shortcut
 
+### Dictation shortcut: Win + Shift + D
+
+In **Settings → Dictation shortcut**, select **WIN + SHIFT + D**. Press and release
+the combination once to start recording, then again to stop, transcribe and type into
+the focused app. You can also stop with RECORD/STOP in the window. Holding the chord
+does not repeat the action. Activations during transcription are ignored.
+
+Windows registers the combination globally with `RegisterHotKey` and `MOD_NOREPEAT`.
+If another app has already registered it, the main window reports the conflict and
+RECORD remains available. This detects registered global shortcuts; it cannot enumerate
+every app-specific key binding. OFF and the existing hold-to-talk keys remain available.
+Changing the selection applies immediately and finishes any recording in progress.
+Existing installs keep their choice; new installs still default to OFF.
+
+Check registration, repeat suppression, release handling and cleanup on Windows with:
+
+```powershell
+dotnet run --project tools/Murmur.HardwareCheck -c Release -- shortcut
+```
+
+Close Murmur before this check so it does not own the shortcut. The check uses synthetic
+key events, captures no microphone audio and injects no text.
+
+### Desktop and Start Menu shortcuts
+
 `dotnet run` is fine for development, but nobody dictates from a terminal. This publishes the
 app and puts it in the Start Menu and on the Desktop:
 
